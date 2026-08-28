@@ -54,6 +54,11 @@ type WooCommerceOrderUpdatePayload = {
   status?: string;
   set_paid?: boolean;
   transaction_id?: string;
+  fee_lines?: Array<{
+    name: string;
+    total: string;
+    tax_status?: string;
+  }>;
   shipping_lines?: Array<{
     method_id: string;
     method_title: string;
@@ -83,6 +88,13 @@ type CheckoutShippingDecision = {
   freeVariationIds: number[];
 };
 
+type ShippingProtectionDecision = {
+  enabled: boolean;
+  displayName: string;
+  amount: number;
+  currency: string;
+};
+
 @Injectable()
 export class CheckoutService {
   private readonly logger = new Logger(CheckoutService.name);
@@ -103,6 +115,18 @@ export class CheckoutService {
       createCheckoutDto.cart,
       order.currency,
     );
+    const shippingProtection = this.getShippingProtectionDecision(
+      Boolean(createCheckoutDto.shippingProtection?.enabled),
+      order.currency,
+    );
+    if (shippingProtection.enabled) {
+      lineItems.push({
+        name: shippingProtection.displayName,
+        unitAmount: shippingProtection.amount,
+        currency: shippingProtection.currency,
+        quantity: 1,
+      });
+    }
     const shipping = this.getShippingDecision(createCheckoutDto.cart, order.currency);
 
     try {
@@ -118,6 +142,8 @@ export class CheckoutService {
           shippingMethod: shipping.displayName,
           shippingAmount: String(shipping.amount),
           freeShipping: String(shipping.isFree),
+          shippingProtection: String(shippingProtection.enabled),
+          shippingProtectionAmount: String(shippingProtection.amount),
         },
       });
 
@@ -125,6 +151,18 @@ export class CheckoutService {
         WooCommerceOrder,
         WooCommerceOrderUpdatePayload
       >(`/orders/${order.id}`, {
+        fee_lines: shippingProtection.enabled
+          ? [
+              {
+                name: shippingProtection.displayName,
+                total: this.toCurrencyUnitAmount(
+                  shippingProtection.amount,
+                  order.currency,
+                ),
+                tax_status: 'none',
+              },
+            ]
+          : undefined,
         shipping_lines: [
           {
             method_id: shipping.isFree
@@ -150,6 +188,17 @@ export class CheckoutService {
           {
             key: '_headless_free_shipping',
             value: String(shipping.isFree),
+          },
+          {
+            key: '_headless_shipping_protection',
+            value: String(shippingProtection.enabled),
+          },
+          {
+            key: '_headless_shipping_protection_amount',
+            value: this.toCurrencyUnitAmount(
+              shippingProtection.amount,
+              order.currency,
+            ),
           },
         ],
       });
@@ -349,6 +398,24 @@ export class CheckoutService {
         'STRIPE_SHIPPING_MAX_DELIVERY_DAYS',
       ),
       freeVariationIds,
+    };
+  }
+
+  private getShippingProtectionDecision(
+    requested: boolean,
+    currency: string,
+  ): ShippingProtectionDecision {
+    const amount = Number(
+      this.configService.get('STRIPE_SHIPPING_PROTECTION_AMOUNT') ?? 350,
+    );
+
+    return {
+      enabled: requested && Number.isFinite(amount) && amount > 0,
+      displayName:
+        this.configService.get<string>('STRIPE_SHIPPING_PROTECTION_NAME') ??
+        'Shipping protection',
+      amount,
+      currency,
     };
   }
 
