@@ -7,9 +7,28 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const configService = app.get(ConfigService);
   const frontendOrigin = configService.get<string>('FRONTEND_ORIGIN');
+  const allowedOrigins = frontendOrigin
+    ?.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
   app.enableCors({
-    origin: frontendOrigin ? frontendOrigin.split(',') : true,
+    origin: (
+      origin: string | undefined,
+      callback: (error: Error | null, allow?: boolean) => void,
+    ) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      const isConfiguredOrigin = allowedOrigins?.includes(origin);
+      const isLocalViteOrigin =
+        configService.get<string>('NODE_ENV') !== 'production' &&
+        /^http:\/\/(localhost|127\.0\.0\.1):517\d$/.test(origin);
+
+      callback(null, Boolean(isConfiguredOrigin || isLocalViteOrigin));
+    },
   });
 
   app.useGlobalPipes(
