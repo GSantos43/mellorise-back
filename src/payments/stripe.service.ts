@@ -19,10 +19,20 @@ type CheckoutSessionLineItem = {
 type CreateCheckoutSessionInput = {
   orderId: number;
   lineItems: CheckoutSessionLineItem[];
+  shipping: CheckoutSessionShipping;
   successUrl: string;
   cancelUrl: string;
   customerEmail?: string;
   metadata: Record<string, string>;
+};
+
+export type CheckoutSessionShipping = {
+  isFree: boolean;
+  displayName: string;
+  amount: number;
+  currency: string;
+  minDeliveryDays?: number;
+  maxDeliveryDays?: number;
 };
 
 @Injectable()
@@ -62,6 +72,7 @@ export class StripeService {
             'true',
         },
         shipping_address_collection: this.shippingAddressCollection,
+        shipping_options: [this.toShippingOption(input.shipping)],
         line_items: input.lineItems.map((item) => ({
           quantity: item.quantity,
           price_data: {
@@ -99,6 +110,32 @@ export class StripeService {
         'Nao foi possivel conectar ao Stripe agora. Tente novamente.',
       );
     }
+  }
+
+  private toShippingOption(
+    shipping: CheckoutSessionShipping,
+  ): Stripe.Checkout.SessionCreateParams.ShippingOption {
+    return {
+      shipping_rate_data: {
+        type: 'fixed_amount',
+        display_name: shipping.displayName,
+        fixed_amount: {
+          amount: shipping.isFree ? 0 : shipping.amount,
+          currency: shipping.currency.toLowerCase(),
+        },
+        delivery_estimate:
+          shipping.minDeliveryDays || shipping.maxDeliveryDays
+            ? {
+                minimum: shipping.minDeliveryDays
+                  ? { unit: 'business_day', value: shipping.minDeliveryDays }
+                  : undefined,
+                maximum: shipping.maxDeliveryDays
+                  ? { unit: 'business_day', value: shipping.maxDeliveryDays }
+                  : undefined,
+              }
+            : undefined,
+      },
+    };
   }
 
   constructWebhookEvent(rawBody: Buffer, signature: string): Stripe.Event {

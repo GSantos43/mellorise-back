@@ -17,4 +17,14 @@ export class ProductResponseDto {
   permalink: string | null;
   purchasable: boolean;
   stockStatus: string;
+  variants?: Array<{
+    id: number;
+    title: string;
+    price: string;
+    regularPrice: string | null;
+    salePrice: string | null;
+    compareAtPrice: string | null;
+    purchasable: boolean;
+    stockStatus: string;
+  }>;
 }

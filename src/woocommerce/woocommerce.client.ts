@@ -15,7 +15,7 @@ import { firstValueFrom } from 'rxjs';
 @Injectable()
 export class WooCommerceClient {
   private readonly logger = new Logger(WooCommerceClient.name);
-  private readonly baseUrl: string;
+  private readonly storeUrl: string;
   private readonly consumerKey: string;
   private readonly consumerSecret: string;
 
@@ -25,7 +25,7 @@ export class WooCommerceClient {
   ) {
     const storeUrl = this.getRequiredConfig('WOOCOMMERCE_URL');
 
-    this.baseUrl = `${storeUrl.replace(/\/$/, '')}/wp-json/wc/v3`;
+    this.storeUrl = storeUrl.replace(/\/$/, '');
     this.consumerKey = this.getRequiredConfig('WOOCOMMERCE_CONSUMER_KEY');
     this.consumerSecret = this.getRequiredConfig('WOOCOMMERCE_CONSUMER_SECRET');
   }
@@ -36,9 +36,26 @@ export class WooCommerceClient {
   ): Promise<TResponse> {
     try {
       const response = await firstValueFrom(
-        this.httpService.get<TResponse>(this.buildUrl(path), {
+        this.httpService.get<TResponse>(this.buildUrl('wc/v3', path), {
           ...config,
           auth: this.auth,
+        }),
+      );
+
+      return response.data;
+    } catch (error) {
+      this.handleError(error);
+    }
+  }
+
+  async getStore<TResponse>(
+    path: string,
+    config: AxiosRequestConfig = {},
+  ): Promise<TResponse> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get<TResponse>(this.buildUrl('wc/store/v1', path), {
+          ...config,
         }),
       );
 
@@ -55,7 +72,7 @@ export class WooCommerceClient {
   ): Promise<TResponse> {
     try {
       const response = await firstValueFrom(
-        this.httpService.post<TResponse>(this.buildUrl(path), body, {
+        this.httpService.post<TResponse>(this.buildUrl('wc/v3', path), body, {
           ...config,
           auth: this.auth,
         }),
@@ -74,7 +91,7 @@ export class WooCommerceClient {
   ): Promise<TResponse> {
     try {
       const response = await firstValueFrom(
-        this.httpService.put<TResponse>(this.buildUrl(path), body, {
+        this.httpService.put<TResponse>(this.buildUrl('wc/v3', path), body, {
           ...config,
           auth: this.auth,
         }),
@@ -93,8 +110,12 @@ export class WooCommerceClient {
     };
   }
 
-  private buildUrl(path: string): string {
-    return `${this.baseUrl}/${path.replace(/^\//, '')}`;
+  private buildUrl(namespace: string, path: string): string {
+    const route = `/${namespace.replace(/^\/|\/$/g, '')}/${path.replace(/^\//, '')}`;
+    const url = new URL('/index.php', this.storeUrl);
+    url.searchParams.set('rest_route', route);
+
+    return url.toString();
   }
 
   private getRequiredConfig(key: string): string {

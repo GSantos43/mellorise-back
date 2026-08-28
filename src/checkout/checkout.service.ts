@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 import { WooCommerceClient } from '../woocommerce/woocommerce.client';
 import { StripeService } from '../payments/stripe.service';
@@ -53,6 +54,11 @@ type WooCommerceOrderUpdatePayload = {
   status?: string;
   set_paid?: boolean;
   transaction_id?: string;
+  shipping_lines?: Array<{
+    method_id: string;
+    method_title: string;
+    total: string;
+  }>;
   meta_data?: Array<{
     key: string;
     value: string;
@@ -67,6 +73,16 @@ type CheckoutLineItem = {
   image?: string | null;
 };
 
+type CheckoutShippingDecision = {
+  isFree: boolean;
+  displayName: string;
+  amount: number;
+  currency: string;
+  minDeliveryDays?: number;
+  maxDeliveryDays?: number;
+  freeVariationIds: number[];
+};
+
 @Injectable()
 export class CheckoutService {
   private readonly logger = new Logger(CheckoutService.name);
@@ -74,6 +90,7 @@ export class CheckoutService {
   constructor(
     private readonly wooCommerceClient: WooCommerceClient,
     private readonly stripeService: StripeService,
+    private readonly configService: ConfigService,
   ) {}
 
   async createCheckoutSession(
@@ -86,16 +103,21 @@ export class CheckoutService {
       createCheckoutDto.cart,
       order.currency,
     );
+    const shipping = this.getShippingDecision(createCheckoutDto.cart, order.currency);
 
     try {
       const session = await this.stripeService.createCheckoutSession({
         orderId: order.id,
         lineItems,
+        shipping,
         successUrl: createCheckoutDto.successUrl,
         cancelUrl: createCheckoutDto.cancelUrl,
         customerEmail: createCheckoutDto.customerEmail,
         metadata: {
           wooCommerceOrderId: String(order.id),
+          shippingMethod: shipping.displayName,
+          shippingAmount: String(shipping.amount),
+          freeShipping: String(shipping.isFree),
         },
       });
 
@@ -103,10 +125,31 @@ export class CheckoutService {
         WooCommerceOrder,
         WooCommerceOrderUpdatePayload
       >(`/orders/${order.id}`, {
+        shipping_lines: [
+          {
+            method_id: shipping.isFree
+              ? 'headless_free_shipping'
+              : 'headless_standard_shipping',
+            method_title: shipping.displayName,
+            total: this.toCurrencyUnitAmount(shipping.amount, order.currency),
+          },
+        ],
         meta_data: [
           {
             key: 'stripe_checkout_session_id',
             value: session.id,
+          },
+          {
+            key: '_headless_shipping_method',
+            value: shipping.displayName,
+          },
+          {
+            key: '_headless_shipping_amount',
+            value: String(shipping.amount / 100),
+          },
+          {
+            key: '_headless_free_shipping',
+            value: String(shipping.isFree),
           },
         ],
       });
@@ -160,6 +203,10 @@ export class CheckoutService {
         meta_data: [
           {
             key: '_headless_checkout',
+            value: 'true',
+          },
+          {
+            key: '_headless_shipping_pending',
             value: 'true',
           },
         ],
@@ -269,9 +316,77 @@ export class CheckoutService {
     };
   }
 
+  private getShippingDecision(
+    cart: CheckoutCartItemDto[],
+    currency: string,
+  ): CheckoutShippingDecision {
+    const freeVariationIds = this.getNumberListConfig(
+      'FREE_SHIPPING_VARIATION_IDS',
+    );
+    const hasFreeShipping =
+      freeVariationIds.length > 0 &&
+      cart.every(
+        (item) => item.variationId && freeVariationIds.includes(item.variationId),
+      );
+    const amount = hasFreeShipping
+      ? 0
+      : Number(this.configService.get('STRIPE_SHIPPING_RATE_AMOUNT') ?? 999);
+    const displayName = hasFreeShipping
+      ? this.configService.get<string>('STRIPE_FREE_SHIPPING_RATE_NAME') ??
+        'Free shipping'
+      : this.configService.get<string>('STRIPE_SHIPPING_RATE_NAME') ??
+        'Standard shipping';
+
+    return {
+      isFree: hasFreeShipping,
+      displayName,
+      amount,
+      currency,
+      minDeliveryDays: this.getOptionalNumberConfig(
+        'STRIPE_SHIPPING_MIN_DELIVERY_DAYS',
+      ),
+      maxDeliveryDays: this.getOptionalNumberConfig(
+        'STRIPE_SHIPPING_MAX_DELIVERY_DAYS',
+      ),
+      freeVariationIds,
+    };
+  }
+
+  private getNumberListConfig(key: string): number[] {
+    return (
+      this.configService
+        .get<string>(key)
+        ?.split(',')
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isInteger(value) && value > 0) ?? []
+    );
+  }
+
+  private getOptionalNumberConfig(key: string): number | undefined {
+    const value = Number(this.configService.get(key));
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+  }
+
   private toMinorUnitAmount(total: string, currency: string): number {
     const numericTotal = Number(total);
-    const zeroDecimalCurrencies = new Set([
+    const multiplier = this.isZeroDecimalCurrency(currency) ? 1 : 100;
+    const amount = Math.round(numericTotal * multiplier);
+
+    if (!Number.isFinite(amount) || amount < 1) {
+      this.logger.warn(`Invalid WooCommerce product total: ${total} ${currency}`);
+      throw new BadRequestException('Invalid checkout total');
+    }
+
+    return amount;
+  }
+
+  private toCurrencyUnitAmount(amount: number, currency: string): string {
+    const divisor = this.isZeroDecimalCurrency(currency) ? 1 : 100;
+    return (amount / divisor).toFixed(divisor === 1 ? 0 : 2);
+  }
+
+  private isZeroDecimalCurrency(currency: string): boolean {
+    return new Set([
       'BIF',
       'CLP',
       'DJF',
@@ -288,17 +403,6 @@ export class CheckoutService {
       'XAF',
       'XOF',
       'XPF',
-    ]);
-    const multiplier = zeroDecimalCurrencies.has(currency.toUpperCase())
-      ? 1
-      : 100;
-    const amount = Math.round(numericTotal * multiplier);
-
-    if (!Number.isFinite(amount) || amount < 1) {
-      this.logger.warn(`Invalid WooCommerce product total: ${total} ${currency}`);
-      throw new BadRequestException('Invalid checkout total');
-    }
-
-    return amount;
+    ]).has(currency.toUpperCase());
   }
 }
