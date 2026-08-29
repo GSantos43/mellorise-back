@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 import { WooCommerceClient } from '../woocommerce/woocommerce.client';
 import { StripeService } from '../payments/stripe.service';
+import { DiscountsService } from '../discounts/discounts.service';
 import {
   CheckoutCartItemDto,
   CreateCheckoutDto,
@@ -43,6 +44,12 @@ type WooCommerceOrderPayload = {
     product_id: number;
     variation_id?: number;
     quantity: number;
+  }>;
+  billing?: {
+    email: string;
+  };
+  coupon_lines?: Array<{
+    code: string;
   }>;
   meta_data: Array<{
     key: string;
@@ -103,18 +110,31 @@ export class CheckoutService {
     private readonly wooCommerceClient: WooCommerceClient,
     private readonly stripeService: StripeService,
     private readonly configService: ConfigService,
+    private readonly discountsService: DiscountsService,
   ) {}
 
   async createCheckoutSession(
     createCheckoutDto: CreateCheckoutDto,
   ): Promise<CheckoutResponseDto> {
     this.validateCart(createCheckoutDto.cart);
+    const coupon = createCheckoutDto.couponCode
+      ? await this.discountsService.validateWelcomeCoupon(
+          createCheckoutDto.couponCode,
+          createCheckoutDto.customerEmail,
+        )
+      : null;
 
     const order = await this.createPendingWooCommerceOrder(createCheckoutDto);
-    const lineItems = await this.buildStripeLineItems(
+    let lineItems = await this.buildStripeLineItems(
       createCheckoutDto.cart,
       order.currency,
     );
+    const shipping = this.getShippingDecision(createCheckoutDto.cart, order.currency);
+
+    if (coupon) {
+      lineItems = this.applyPercentDiscount(lineItems, Number(coupon.amount));
+    }
+
     const shippingProtection = this.getShippingProtectionDecision(
       Boolean(createCheckoutDto.shippingProtection?.enabled),
       order.currency,
@@ -127,7 +147,6 @@ export class CheckoutService {
         quantity: 1,
       });
     }
-    const shipping = this.getShippingDecision(createCheckoutDto.cart, order.currency);
 
     try {
       const session = await this.stripeService.createCheckoutSession({
@@ -144,6 +163,7 @@ export class CheckoutService {
           freeShipping: String(shipping.isFree),
           shippingProtection: String(shippingProtection.enabled),
           shippingProtectionAmount: String(shippingProtection.amount),
+          couponCode: coupon?.code ?? '',
         },
       });
 
@@ -258,7 +278,27 @@ export class CheckoutService {
             key: '_headless_shipping_pending',
             value: 'true',
           },
+          ...(createCheckoutDto.couponCode
+            ? [
+                {
+                  key: '_headless_coupon_code',
+                  value: createCheckoutDto.couponCode.trim().toUpperCase(),
+                },
+              ]
+            : []),
         ],
+        billing: createCheckoutDto.customerEmail
+          ? {
+              email: createCheckoutDto.customerEmail,
+            }
+          : undefined,
+        coupon_lines: createCheckoutDto.couponCode
+          ? [
+              {
+                code: createCheckoutDto.couponCode.trim().toUpperCase(),
+              },
+            ]
+          : undefined,
       },
     );
   }
@@ -432,6 +472,20 @@ export class CheckoutService {
   private getOptionalNumberConfig(key: string): number | undefined {
     const value = Number(this.configService.get(key));
     return Number.isFinite(value) && value > 0 ? value : undefined;
+  }
+
+  private applyPercentDiscount(
+    lineItems: CheckoutLineItem[],
+    percent: number,
+  ): CheckoutLineItem[] {
+    if (!Number.isFinite(percent) || percent <= 0) return lineItems;
+
+    const multiplier = Math.max(0, 1 - percent / 100);
+
+    return lineItems.map((item) => ({
+      ...item,
+      unitAmount: Math.max(1, Math.round(item.unitAmount * multiplier)),
+    }));
   }
 
   private toMinorUnitAmount(total: string, currency: string): number {

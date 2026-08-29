@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { CheckoutModule } from './checkout/checkout.module';
+import { DiscountsModule } from './discounts/discounts.module';
 import { ProductsModule } from './products/products.module';
 
 @Module({
@@ -9,6 +10,7 @@ import { ProductsModule } from './products/products.module';
       isGlobal: true,
     }),
     ProductsModule,
+    DiscountsModule,
     CheckoutModule,
   ],
 })

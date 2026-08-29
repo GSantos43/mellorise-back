@@ -1,11 +1,13 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
-  IsBoolean,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsInt,
+  IsNumber,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
   IsUrl,
@@ -32,8 +34,15 @@ export class CheckoutCartItemDto {
 }
 
 export class ShippingProtectionDto {
+  @IsOptional()
   @IsBoolean()
-  enabled: boolean;
+  enabled?: boolean;
+
+  @Type(() => Number)
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  amount?: number;
 }
 
 export class CreateCheckoutDto {
@@ -62,6 +71,11 @@ export class CreateCheckoutDto {
   customerNote?: string;
 
   @IsOptional()
+  @IsString()
+  couponCode?: string;
+
+  @IsOptional()
+  @IsObject()
   @ValidateNested()
   @Type(() => ShippingProtectionDto)
   shippingProtection?: ShippingProtectionDto;
