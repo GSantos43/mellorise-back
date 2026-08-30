@@ -45,6 +45,31 @@ export class ShippingProtectionDto {
   amount?: number;
 }
 
+export class CheckoutPromotionDto {
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  label?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  paidQuantity: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  freeQuantity: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  deliveredQuantity: number;
+}
+
 export class CheckoutCustomerDto {
   @IsOptional()
   @IsString()
@@ -165,4 +190,10 @@ export class CreateCheckoutDto {
   @ValidateNested()
   @Type(() => ShippingProtectionDto)
   shippingProtection?: ShippingProtectionDto;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => CheckoutPromotionDto)
+  promotion?: CheckoutPromotionDto;
 }

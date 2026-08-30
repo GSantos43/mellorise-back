@@ -7,6 +7,7 @@ import { DiscountsService } from '../discounts/discounts.service';
 import {
   CheckoutAddressDto,
   CheckoutCartItemDto,
+  CheckoutPromotionDto,
   CreateCheckoutDto,
 } from './dto/create-checkout.dto';
 import { CheckoutResponseDto } from './dto/checkout-response.dto';
@@ -190,6 +191,13 @@ export class CheckoutService {
           shippingProtection: String(shippingProtection.enabled),
           shippingProtectionAmount: String(shippingProtection.amount),
           couponCode: coupon?.code ?? '',
+          promotionCode: createCheckoutDto.promotion?.code ?? '',
+          promotionFreeQuantity: String(
+            createCheckoutDto.promotion?.freeQuantity ?? 0,
+          ),
+          promotionDeliveredQuantity: String(
+            createCheckoutDto.promotion?.deliveredQuantity ?? 0,
+          ),
           customerPhone: createCheckoutDto.customer?.phone ?? '',
           shippingPostcode: createCheckoutDto.shippingAddress?.postcode ?? '',
           shippingState: createCheckoutDto.shippingAddress?.state ?? '',
@@ -315,6 +323,7 @@ export class CheckoutService {
                 },
               ]
             : []),
+          ...this.toWooCommercePromotionMeta(createCheckoutDto.promotion),
         ],
         billing: this.toWooCommerceBillingAddress(createCheckoutDto),
         shipping: this.toWooCommerceShippingAddress(
@@ -434,6 +443,44 @@ export class CheckoutService {
       variation_id: item.variationId,
       quantity: item.quantity,
     };
+  }
+
+  private toWooCommercePromotionMeta(promotion?: CheckoutPromotionDto) {
+    if (
+      !promotion ||
+      promotion.paidQuantity < 1 ||
+      promotion.freeQuantity < 1 ||
+      promotion.deliveredQuantity < promotion.paidQuantity
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        key: '_headless_bundle_promotion',
+        value: promotion.code || promotion.label || 'bundle_promotion',
+      },
+      {
+        key: '_headless_bundle_promotion_label',
+        value: promotion.label || promotion.code || 'Bundle promotion',
+      },
+      {
+        key: '_headless_paid_quantity',
+        value: String(promotion.paidQuantity),
+      },
+      {
+        key: '_headless_free_quantity',
+        value: String(promotion.freeQuantity),
+      },
+      {
+        key: '_headless_delivered_quantity',
+        value: String(promotion.deliveredQuantity),
+      },
+      {
+        key: '_headless_fulfillment_note',
+        value: `Ship ${promotion.deliveredQuantity} bottles: ${promotion.paidQuantity} paid + ${promotion.freeQuantity} free.`,
+      },
+    ];
   }
 
   private getShippingDecision(
