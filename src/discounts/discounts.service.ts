@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
+import { MailService } from '../mail/mail.service';
 import { WooCommerceClient } from '../woocommerce/woocommerce.client';
 import { CreateWelcomeDiscountDto } from './dto/create-welcome-discount.dto';
 import { ValidateWelcomeDiscountDto } from './dto/validate-welcome-discount.dto';
@@ -42,9 +43,12 @@ type WooCommerceCouponPayload = {
 
 @Injectable()
 export class DiscountsService {
+  private readonly logger = new Logger(DiscountsService.name);
+
   constructor(
     private readonly wooCommerceClient: WooCommerceClient,
     private readonly configService: ConfigService,
+    private readonly mailService: MailService,
   ) {}
 
   async createWelcomeDiscount(
@@ -83,13 +87,17 @@ export class DiscountsService {
       ],
     });
 
-    return {
+    const welcomeDiscount = {
       code: coupon.code.toUpperCase(),
       email,
       amount: coupon.amount,
       discountType: coupon.discount_type,
       expiresAt,
     };
+
+    await this.sendWelcomeDiscountEmail(welcomeDiscount);
+
+    return welcomeDiscount;
   }
 
   async validateWelcomeCoupon(code: string, email?: string): Promise<WooCommerceCoupon> {
@@ -214,5 +222,36 @@ export class DiscountsService {
 
   private normalizeEmail(email: string): string {
     return email.trim().toLowerCase();
+  }
+
+  private async sendWelcomeDiscountEmail(
+    discount: WelcomeDiscountResponseDto,
+  ): Promise<void> {
+    try {
+      await this.mailService.sendWelcomeDiscount({
+        to: discount.email,
+        code: discount.code,
+        amount: discount.amount,
+        expiresAt: discount.expiresAt,
+        shopUrl: this.getWelcomeDiscountShopUrl(),
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Could not send welcome discount email to ${discount.email}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
+  private getWelcomeDiscountShopUrl(): string {
+    const frontendUrl =
+      this.configService.get<string>('WELCOME_DISCOUNT_SHOP_URL') ||
+      this.configService.get<string>('FRONTEND_URL') ||
+      this.configService.get<string>('FRONTEND_ORIGIN')?.split(',')[0] ||
+      '';
+
+    return frontendUrl
+      ? `${frontendUrl.replace(/\/$/, '')}/products/wondernest-heightener-gummies-2026`
+      : 'https://mellorise-front.vercel.app/products/wondernest-heightener-gummies-2026';
   }
 }
