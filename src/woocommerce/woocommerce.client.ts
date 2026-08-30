@@ -129,9 +129,8 @@ export class WooCommerceClient {
     path: string,
     params?: AxiosRequestConfig['params'],
   ): string {
-    const route = `/${namespace.replace(/^\/|\/$/g, '')}/${path.replace(/^\//, '')}`;
-    const url = new URL('/index.php', this.storeUrl);
-    url.searchParams.set('rest_route', route);
+    const route = `${namespace.replace(/^\/|\/$/g, '')}/${path.replace(/^\//, '')}`;
+    const url = new URL(`/wp-json/${route}`, this.storeUrl);
     this.appendParams(url, params);
 
     return url.toString();
@@ -143,9 +142,8 @@ export class WooCommerceClient {
     path: string,
     params?: AxiosRequestConfig['params'],
   ): string {
-    const route = `/${namespace.replace(/^\/|\/$/g, '')}/${path.replace(/^\//, '')}`;
-    const url = new URL('/index.php', this.storeUrl);
-    url.searchParams.set('rest_route', route);
+    const route = `${namespace.replace(/^\/|\/$/g, '')}/${path.replace(/^\//, '')}`;
+    const url = new URL(`/wp-json/${route}`, this.storeUrl);
     this.appendParams(url, params);
     this.appendOAuthSignature(url, method);
 
