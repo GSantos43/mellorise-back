@@ -66,6 +66,10 @@ export class StripeService {
         customer_email: input.customerEmail,
         client_reference_id: String(input.orderId),
         metadata: input.metadata,
+        billing_address_collection: 'required',
+        phone_number_collection: {
+          enabled: true,
+        },
         automatic_tax: {
           enabled:
             this.configService.get<string>('STRIPE_AUTOMATIC_TAX_ENABLED') ===

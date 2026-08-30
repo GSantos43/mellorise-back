@@ -45,6 +45,74 @@ export class ShippingProtectionDto {
   amount?: number;
 }
 
+export class CheckoutCustomerDto {
+  @IsOptional()
+  @IsString()
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  lastName?: string;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+}
+
+export class CheckoutAddressDto {
+  @IsOptional()
+  @IsString()
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  lastName?: string;
+
+  @IsOptional()
+  @IsString()
+  company?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  address1: string;
+
+  @IsOptional()
+  @IsString()
+  address2?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  city: string;
+
+  @IsString()
+  @IsNotEmpty()
+  state: string;
+
+  @IsString()
+  @IsNotEmpty()
+  postcode: string;
+
+  @IsString()
+  @IsNotEmpty()
+  country: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+}
+
 export class CreateCheckoutDto {
   @IsArray()
   @ArrayMinSize(1)
@@ -73,6 +141,24 @@ export class CreateCheckoutDto {
   @IsOptional()
   @IsString()
   couponCode?: string;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => CheckoutCustomerDto)
+  customer?: CheckoutCustomerDto;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => CheckoutAddressDto)
+  billingAddress?: CheckoutAddressDto;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => CheckoutAddressDto)
+  shippingAddress?: CheckoutAddressDto;
 
   @IsOptional()
   @IsObject()

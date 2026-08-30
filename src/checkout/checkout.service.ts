@@ -5,6 +5,7 @@ import { WooCommerceClient } from '../woocommerce/woocommerce.client';
 import { StripeService } from '../payments/stripe.service';
 import { DiscountsService } from '../discounts/discounts.service';
 import {
+  CheckoutAddressDto,
   CheckoutCartItemDto,
   CreateCheckoutDto,
 } from './dto/create-checkout.dto';
@@ -46,7 +47,29 @@ type WooCommerceOrderPayload = {
     quantity: number;
   }>;
   billing?: {
-    email: string;
+    first_name?: string;
+    last_name?: string;
+    company?: string;
+    address_1?: string;
+    address_2?: string;
+    city?: string;
+    state?: string;
+    postcode?: string;
+    country?: string;
+    email?: string;
+    phone?: string;
+  };
+  shipping?: {
+    first_name?: string;
+    last_name?: string;
+    company?: string;
+    address_1?: string;
+    address_2?: string;
+    city?: string;
+    state?: string;
+    postcode?: string;
+    country?: string;
+    phone?: string;
   };
   coupon_lines?: Array<{
     code: string;
@@ -61,6 +84,8 @@ type WooCommerceOrderUpdatePayload = {
   status?: string;
   set_paid?: boolean;
   transaction_id?: string;
+  billing?: WooCommerceOrderPayload['billing'];
+  shipping?: WooCommerceOrderPayload['shipping'];
   fee_lines?: Array<{
     name: string;
     total: string;
@@ -155,7 +180,8 @@ export class CheckoutService {
         shipping,
         successUrl: createCheckoutDto.successUrl,
         cancelUrl: createCheckoutDto.cancelUrl,
-        customerEmail: createCheckoutDto.customerEmail,
+        customerEmail:
+          createCheckoutDto.customerEmail || createCheckoutDto.customer?.email,
         metadata: {
           wooCommerceOrderId: String(order.id),
           shippingMethod: shipping.displayName,
@@ -164,6 +190,9 @@ export class CheckoutService {
           shippingProtection: String(shippingProtection.enabled),
           shippingProtectionAmount: String(shippingProtection.amount),
           couponCode: coupon?.code ?? '',
+          customerPhone: createCheckoutDto.customer?.phone ?? '',
+          shippingPostcode: createCheckoutDto.shippingAddress?.postcode ?? '',
+          shippingState: createCheckoutDto.shippingAddress?.state ?? '',
         },
       });
 
@@ -287,11 +316,10 @@ export class CheckoutService {
               ]
             : []),
         ],
-        billing: createCheckoutDto.customerEmail
-          ? {
-              email: createCheckoutDto.customerEmail,
-            }
-          : undefined,
+        billing: this.toWooCommerceBillingAddress(createCheckoutDto),
+        shipping: this.toWooCommerceShippingAddress(
+          createCheckoutDto.shippingAddress,
+        ),
         coupon_lines: createCheckoutDto.couponCode
           ? [
               {
@@ -339,6 +367,8 @@ export class CheckoutService {
       return;
     }
 
+    const stripeAddressUpdate = this.toWooCommerceAddressUpdateFromStripe(session);
+
     await this.wooCommerceClient.put<WooCommerceOrder, WooCommerceOrderUpdatePayload>(
       `/orders/${orderId}`,
       {
@@ -348,6 +378,7 @@ export class CheckoutService {
           typeof session.payment_intent === 'string'
             ? session.payment_intent
             : session.payment_intent?.id,
+        ...stripeAddressUpdate,
         meta_data: [
           {
             key: 'stripe_checkout_session_id',
@@ -472,6 +503,98 @@ export class CheckoutService {
   private getOptionalNumberConfig(key: string): number | undefined {
     const value = Number(this.configService.get(key));
     return Number.isFinite(value) && value > 0 ? value : undefined;
+  }
+
+  private toWooCommerceBillingAddress(createCheckoutDto: CreateCheckoutDto) {
+    const address = createCheckoutDto.billingAddress;
+    const customer = createCheckoutDto.customer;
+    const email =
+      createCheckoutDto.customerEmail || address?.email || customer?.email;
+
+    if (!address && !email && !customer?.phone) return undefined;
+
+    return {
+      ...this.toWooCommerceAddress(address),
+      first_name: address?.firstName || customer?.firstName,
+      last_name: address?.lastName || customer?.lastName,
+      email,
+      phone: address?.phone || customer?.phone,
+    };
+  }
+
+  private toWooCommerceShippingAddress(address?: CheckoutAddressDto) {
+    if (!address) return undefined;
+
+    return {
+      ...this.toWooCommerceAddress(address),
+      phone: address.phone,
+    };
+  }
+
+  private toWooCommerceAddress(address?: CheckoutAddressDto) {
+    if (!address) return {};
+
+    return {
+      first_name: address.firstName,
+      last_name: address.lastName,
+      company: address.company,
+      address_1: address.address1,
+      address_2: address.address2,
+      city: address.city,
+      state: address.state,
+      postcode: address.postcode,
+      country: address.country,
+    };
+  }
+
+  private toWooCommerceAddressUpdateFromStripe(
+    session: Stripe.Checkout.Session,
+  ): Partial<WooCommerceOrderPayload> {
+    const customerDetails = session.customer_details;
+    const shippingDetails = session.shipping_details;
+    const billingAddress = customerDetails?.address;
+    const shippingAddress = shippingDetails?.address;
+    const billingName = this.splitName(customerDetails?.name);
+    const shippingName = this.splitName(shippingDetails?.name);
+
+    return {
+      billing: billingAddress
+        ? {
+            first_name: billingName.firstName,
+            last_name: billingName.lastName,
+            address_1: billingAddress.line1 ?? undefined,
+            address_2: billingAddress.line2 ?? undefined,
+            city: billingAddress.city ?? undefined,
+            state: billingAddress.state ?? undefined,
+            postcode: billingAddress.postal_code ?? undefined,
+            country: billingAddress.country ?? undefined,
+            email: customerDetails?.email ?? undefined,
+            phone: customerDetails?.phone ?? undefined,
+          }
+        : undefined,
+      shipping: shippingAddress
+        ? {
+            first_name: shippingName.firstName,
+            last_name: shippingName.lastName,
+            address_1: shippingAddress.line1 ?? undefined,
+            address_2: shippingAddress.line2 ?? undefined,
+            city: shippingAddress.city ?? undefined,
+            state: shippingAddress.state ?? undefined,
+            postcode: shippingAddress.postal_code ?? undefined,
+            country: shippingAddress.country ?? undefined,
+            phone: customerDetails?.phone ?? undefined,
+          }
+        : undefined,
+    };
+  }
+
+  private splitName(name?: string | null): { firstName?: string; lastName?: string } {
+    if (!name?.trim()) return {};
+    const parts = name.trim().split(/\s+/);
+    return {
+      firstName: parts.shift(),
+      lastName: parts.join(' ') || undefined,
+    };
   }
 
   private applyPercentDiscount(
