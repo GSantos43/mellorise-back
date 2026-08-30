@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
 import { WooCommerceClient } from '../woocommerce/woocommerce.client';
 import { CreateWelcomeDiscountDto } from './dto/create-welcome-discount.dto';
+import { ValidateWelcomeDiscountDto } from './dto/validate-welcome-discount.dto';
 import { WelcomeDiscountResponseDto } from './dto/welcome-discount-response.dto';
 
 type WooCommerceCoupon = {
@@ -144,6 +145,21 @@ export class DiscountsService {
     }
 
     return coupon;
+  }
+
+  async validateWelcomeDiscount(
+    input: ValidateWelcomeDiscountDto,
+  ): Promise<WelcomeDiscountResponseDto> {
+    const email = this.normalizeEmail(input.customerEmail);
+    const coupon = await this.validateWelcomeCoupon(input.couponCode, email);
+
+    return {
+      code: coupon.code.toUpperCase(),
+      email,
+      amount: coupon.amount,
+      discountType: coupon.discount_type,
+      expiresAt: coupon.date_expires || '',
+    };
   }
 
   get welcomeDiscountPercent(): string {
