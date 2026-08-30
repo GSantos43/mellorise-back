@@ -25,6 +25,7 @@ type QueryParamValue =
 export class WooCommerceClient {
   private readonly logger = new Logger(WooCommerceClient.name);
   private readonly storeUrl: string;
+  private readonly signatureBaseUrl: string;
   private readonly consumerKey: string;
   private readonly consumerSecret: string;
 
@@ -35,6 +36,10 @@ export class WooCommerceClient {
     const storeUrl = this.getRequiredConfig('WOOCOMMERCE_URL');
 
     this.storeUrl = storeUrl.replace(/\/$/, '');
+    this.signatureBaseUrl = (
+      this.configService.get<string>('WOOCOMMERCE_SIGNATURE_BASE_URL') ||
+      this.storeUrl
+    ).replace(/\/$/, '');
     this.consumerKey = this.getRequiredConfig('WOOCOMMERCE_CONSUMER_KEY');
     this.consumerSecret = this.getRequiredConfig('WOOCOMMERCE_CONSUMER_SECRET');
   }
@@ -183,7 +188,8 @@ export class WooCommerceClient {
   }
 
   private createOAuthSignature(url: URL, method: string): string {
-    const baseUrl = `${url.origin}${url.pathname}`;
+    const signatureUrl = new URL(url.pathname, this.signatureBaseUrl);
+    const baseUrl = `${signatureUrl.origin}${signatureUrl.pathname}`;
     const normalizedParams = [...url.searchParams.entries()]
       .filter(([key]) => key !== 'oauth_signature')
       .sort(([leftKey, leftValue], [rightKey, rightValue]) => {
@@ -200,7 +206,7 @@ export class WooCommerceClient {
       this.percentEncode(baseUrl),
       this.percentEncode(normalizedParams),
     ].join('&');
-    const signingKey = `${this.percentEncode(this.consumerSecret)}&`;
+    const signingKey = `${this.consumerSecret}&`;
 
     return createHmac('sha256', signingKey).update(signatureBase).digest('base64');
   }
