@@ -4,6 +4,7 @@ import Stripe from 'stripe';
 import { WooCommerceClient } from '../woocommerce/woocommerce.client';
 import { StripeService } from '../payments/stripe.service';
 import { DiscountsService } from '../discounts/discounts.service';
+import { WiioService } from '../fulfillment/wiio.service';
 import {
   CheckoutAddressDto,
   CheckoutCartItemDto,
@@ -13,10 +14,32 @@ import { CheckoutResponseDto } from './dto/checkout-response.dto';
 
 type WooCommerceOrder = {
   id: number;
+  number?: string;
   status: string;
   total: string;
   currency: string;
   payment_url?: string;
+  billing?: WooCommerceOrderPayload['billing'];
+  shipping?: WooCommerceOrderPayload['shipping'];
+  line_items?: Array<{
+    id?: number;
+    name?: string;
+    product_id?: number;
+    variation_id?: number;
+    quantity?: number;
+    total?: string;
+    sku?: string;
+    meta_data?: Array<{
+      key?: string;
+      value?: unknown;
+    }>;
+  }>;
+  shipping_lines?: WooCommerceOrderUpdatePayload['shipping_lines'];
+  coupon_lines?: WooCommerceOrderPayload['coupon_lines'];
+  meta_data?: Array<{
+    key?: string;
+    value?: unknown;
+  }>;
 };
 
 type WooCommerceProduct = {
@@ -55,6 +78,12 @@ type WooCommerceOrderPayload = {
     product_id: number;
     variation_id?: number;
     quantity: number;
+    subtotal?: string;
+    total?: string;
+    meta_data?: Array<{
+      key: string;
+      value: string;
+    }>;
   }>;
   billing?: {
     first_name?: string;
@@ -163,6 +192,7 @@ export class CheckoutService {
     private readonly stripeService: StripeService,
     private readonly configService: ConfigService,
     private readonly discountsService: DiscountsService,
+    private readonly wiioService: WiioService,
   ) {}
 
   async createCheckoutSession(
@@ -210,7 +240,10 @@ export class CheckoutService {
         orderId: order.id,
         lineItems,
         shipping,
-        successUrl: createCheckoutDto.successUrl,
+        successUrl: this.addOrderIdToSuccessUrl(
+          createCheckoutDto.successUrl,
+          order.id,
+        ),
         cancelUrl: createCheckoutDto.cancelUrl,
         customerEmail:
           createCheckoutDto.customerEmail || createCheckoutDto.customer?.email,
@@ -333,8 +366,8 @@ export class CheckoutService {
         payment_method_title: 'Stripe',
         set_paid: false,
         customer_note: createCheckoutDto.customerNote,
-        line_items: createCheckoutDto.cart.map((item) =>
-          this.toWooCommerceLineItem(item),
+        line_items: createCheckoutDto.cart.flatMap((item, index) =>
+          this.toWooCommerceLineItems(item, index === 0 ? promotion : undefined),
         ),
         meta_data: [
           {
@@ -393,7 +426,10 @@ export class CheckoutService {
 
     const stripeAddressUpdate = this.toWooCommerceAddressUpdateFromStripe(session);
 
-    await this.wooCommerceClient.put<WooCommerceOrder, WooCommerceOrderUpdatePayload>(
+    const paidOrder = await this.wooCommerceClient.put<
+      WooCommerceOrder,
+      WooCommerceOrderUpdatePayload
+    >(
       `/orders/${orderId}`,
       {
         status: 'processing',
@@ -408,9 +444,24 @@ export class CheckoutService {
             key: 'stripe_checkout_session_id',
             value: session.id,
           },
+          {
+            key: '_wiio_ready_for_sync',
+            value: 'true',
+          },
+          {
+            key: '_wiio_sync_source',
+            value: 'stripe_checkout_webhook',
+          },
         ],
       },
     );
+
+    const wiioStatus = await this.wiioService.dispatchPaidOrder(
+      paidOrder,
+      session,
+    );
+
+    await this.updateWiioDispatchStatus(orderId, wiioStatus);
   }
 
   private getOrderIdFromSession(session: Stripe.Checkout.Session): number | null {
@@ -419,6 +470,16 @@ export class CheckoutService {
     const orderId = Number(rawOrderId);
 
     return Number.isInteger(orderId) && orderId > 0 ? orderId : null;
+  }
+
+  private addOrderIdToSuccessUrl(successUrl: string, orderId: number): string {
+    try {
+      const url = new URL(successUrl);
+      url.searchParams.set('order_id', String(orderId));
+      return url.toString();
+    } catch {
+      return successUrl;
+    }
   }
 
   private async markOrderAsFailed(orderId: number): Promise<void> {
@@ -432,6 +493,35 @@ export class CheckoutService {
     } catch (error) {
       this.logger.warn(
         `Could not mark WooCommerce order ${orderId} as failed after payment failure`,
+      );
+    }
+  }
+
+  private async updateWiioDispatchStatus(
+    orderId: number,
+    wiioStatus: 'disabled' | 'missing_endpoint' | 'sent' | 'failed',
+  ): Promise<void> {
+    if (wiioStatus === 'disabled') return;
+
+    try {
+      await this.wooCommerceClient.put<
+        WooCommerceOrder,
+        WooCommerceOrderUpdatePayload
+      >(`/orders/${orderId}`, {
+        meta_data: [
+          {
+            key: '_wiio_dispatch_status',
+            value: wiioStatus,
+          },
+          {
+            key: '_wiio_dispatch_attempted_at',
+            value: new Date().toISOString(),
+          },
+        ],
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Could not persist Wiio dispatch status for WooCommerce order ${orderId}`,
       );
     }
   }
@@ -527,12 +617,58 @@ export class CheckoutService {
     }
   }
 
-  private toWooCommerceLineItem(item: CheckoutCartItemDto) {
-    return {
+  private toWooCommerceLineItems(
+    item: CheckoutCartItemDto,
+    promotion?: CheckoutBundlePromotion,
+  ): WooCommerceOrderPayload['line_items'] {
+    const paidLineItem: WooCommerceOrderPayload['line_items'][number] = {
       product_id: item.productId,
       variation_id: item.variationId,
       quantity: item.quantity,
+      meta_data: [
+        {
+          key: '_headless_line_type',
+          value: 'paid',
+        },
+        ...(promotion
+          ? [
+              {
+                key: '_headless_bundle_promotion',
+                value: promotion.code,
+              },
+            ]
+          : []),
+      ],
     };
+
+    if (!promotion?.freeQuantity) {
+      return [paidLineItem];
+    }
+
+    return [
+      paidLineItem,
+      {
+        product_id: item.productId,
+        variation_id: item.variationId,
+        quantity: promotion.freeQuantity,
+        subtotal: '0.00',
+        total: '0.00',
+        meta_data: [
+          {
+            key: '_headless_line_type',
+            value: 'free_bonus',
+          },
+          {
+            key: '_headless_bundle_promotion',
+            value: promotion.code,
+          },
+          {
+            key: '_headless_fulfillment_note',
+            value: `${promotion.freeQuantity} free bottle${promotion.freeQuantity === 1 ? '' : 's'} included in ${promotion.label}.`,
+          },
+        ],
+      },
+    ];
   }
 
   private getBundlePromotion(
