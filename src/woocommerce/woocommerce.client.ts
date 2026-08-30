@@ -36,9 +36,8 @@ export class WooCommerceClient {
   ): Promise<TResponse> {
     try {
       const response = await firstValueFrom(
-        this.httpService.get<TResponse>(this.buildUrl('wc/v3', path), {
+        this.httpService.get<TResponse>(this.buildUrl('wc/v3', path, true), {
           ...config,
-          auth: this.auth,
         }),
       );
 
@@ -72,9 +71,8 @@ export class WooCommerceClient {
   ): Promise<TResponse> {
     try {
       const response = await firstValueFrom(
-        this.httpService.post<TResponse>(this.buildUrl('wc/v3', path), body, {
+        this.httpService.post<TResponse>(this.buildUrl('wc/v3', path, true), body, {
           ...config,
-          auth: this.auth,
         }),
       );
 
@@ -91,9 +89,8 @@ export class WooCommerceClient {
   ): Promise<TResponse> {
     try {
       const response = await firstValueFrom(
-        this.httpService.put<TResponse>(this.buildUrl('wc/v3', path), body, {
+        this.httpService.put<TResponse>(this.buildUrl('wc/v3', path, true), body, {
           ...config,
-          auth: this.auth,
         }),
       );
 
@@ -103,17 +100,15 @@ export class WooCommerceClient {
     }
   }
 
-  private get auth() {
-    return {
-      username: this.consumerKey,
-      password: this.consumerSecret,
-    };
-  }
-
-  private buildUrl(namespace: string, path: string): string {
+  private buildUrl(namespace: string, path: string, includeCredentials = false): string {
     const route = `/${namespace.replace(/^\/|\/$/g, '')}/${path.replace(/^\//, '')}`;
     const url = new URL('/index.php', this.storeUrl);
     url.searchParams.set('rest_route', route);
+
+    if (includeCredentials) {
+      url.searchParams.set('consumer_key', this.consumerKey);
+      url.searchParams.set('consumer_secret', this.consumerSecret);
+    }
 
     return url.toString();
   }
