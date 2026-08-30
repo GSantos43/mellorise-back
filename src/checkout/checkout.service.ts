@@ -7,7 +7,6 @@ import { DiscountsService } from '../discounts/discounts.service';
 import {
   CheckoutAddressDto,
   CheckoutCartItemDto,
-  CheckoutPromotionDto,
   CreateCheckoutDto,
 } from './dto/create-checkout.dto';
 import { CheckoutResponseDto } from './dto/checkout-response.dto';
@@ -24,6 +23,11 @@ type WooCommerceProduct = {
   id: number;
   name: string;
   price: string;
+  status?: string;
+  purchasable?: boolean;
+  stock_status?: string;
+  stock_quantity?: number | null;
+  manage_stock?: boolean;
   images?: Array<{
     src?: string;
   }>;
@@ -32,6 +36,11 @@ type WooCommerceProduct = {
 type WooCommerceVariation = {
   id: number;
   price: string;
+  status?: string;
+  purchasable?: boolean;
+  stock_status?: string;
+  stock_quantity?: number | null;
+  manage_stock?: boolean;
   image?: {
     src?: string;
   };
@@ -128,6 +137,23 @@ type ShippingProtectionDecision = {
   currency: string;
 };
 
+type CheckoutBundlePromotion = {
+  code: string;
+  label: string;
+  paidQuantity: number;
+  freeQuantity: number;
+  deliveredQuantity: number;
+};
+
+type ResolvedCheckoutCartItem = {
+  productId: number;
+  variationId?: number;
+  quantity: number;
+  name: string;
+  price: string;
+  image?: string | null;
+};
+
 @Injectable()
 export class CheckoutService {
   private readonly logger = new Logger(CheckoutService.name);
@@ -143,6 +169,8 @@ export class CheckoutService {
     createCheckoutDto: CreateCheckoutDto,
   ): Promise<CheckoutResponseDto> {
     this.validateCart(createCheckoutDto.cart);
+    const resolvedCart = await this.resolveCheckoutCart(createCheckoutDto.cart);
+    const promotion = this.getBundlePromotion(createCheckoutDto.cart);
     const coupon = createCheckoutDto.couponCode
       ? await this.discountsService.validateWelcomeCoupon(
           createCheckoutDto.couponCode,
@@ -150,9 +178,12 @@ export class CheckoutService {
         )
       : null;
 
-    const order = await this.createPendingWooCommerceOrder(createCheckoutDto);
+    const order = await this.createPendingWooCommerceOrder(
+      createCheckoutDto,
+      promotion,
+    );
     let lineItems = await this.buildStripeLineItems(
-      createCheckoutDto.cart,
+      resolvedCart,
       order.currency,
     );
     const shipping = this.getShippingDecision(createCheckoutDto.cart, order.currency);
@@ -191,12 +222,10 @@ export class CheckoutService {
           shippingProtection: String(shippingProtection.enabled),
           shippingProtectionAmount: String(shippingProtection.amount),
           couponCode: coupon?.code ?? '',
-          promotionCode: createCheckoutDto.promotion?.code ?? '',
-          promotionFreeQuantity: String(
-            createCheckoutDto.promotion?.freeQuantity ?? 0,
-          ),
+          promotionCode: promotion?.code ?? '',
+          promotionFreeQuantity: String(promotion?.freeQuantity ?? 0),
           promotionDeliveredQuantity: String(
-            createCheckoutDto.promotion?.deliveredQuantity ?? 0,
+            promotion?.deliveredQuantity ?? 0,
           ),
           customerPhone: createCheckoutDto.customer?.phone ?? '',
           shippingPostcode: createCheckoutDto.shippingAddress?.postcode ?? '',
@@ -295,6 +324,7 @@ export class CheckoutService {
 
   private async createPendingWooCommerceOrder(
     createCheckoutDto: CreateCheckoutDto,
+    promotion?: CheckoutBundlePromotion,
   ): Promise<WooCommerceOrder> {
     return this.wooCommerceClient.post<WooCommerceOrder, WooCommerceOrderPayload>(
       '/orders',
@@ -323,7 +353,7 @@ export class CheckoutService {
                 },
               ]
             : []),
-          ...this.toWooCommercePromotionMeta(createCheckoutDto.promotion),
+          ...this.toWooCommercePromotionMeta(promotion),
         ],
         billing: this.toWooCommerceBillingAddress(createCheckoutDto),
         shipping: this.toWooCommerceShippingAddress(
@@ -341,31 +371,16 @@ export class CheckoutService {
   }
 
   private async buildStripeLineItems(
-    cart: CheckoutCartItemDto[],
+    cart: ResolvedCheckoutCartItem[],
     currency: string,
   ): Promise<CheckoutLineItem[]> {
-    return Promise.all(
-      cart.map(async (item) => {
-        const product = await this.wooCommerceClient.get<WooCommerceProduct>(
-          `/products/${item.productId}`,
-        );
-        const variation = item.variationId
-          ? await this.wooCommerceClient.get<WooCommerceVariation>(
-              `/products/${item.productId}/variations/${item.variationId}`,
-            )
-          : null;
-        const price = variation?.price || product.price;
-        const image = variation?.image?.src || product.images?.[0]?.src || null;
-
-        return {
-          name: product.name,
-          unitAmount: this.toMinorUnitAmount(price, currency),
-          currency,
-          quantity: item.quantity,
-          image,
-        };
-      }),
-    );
+    return cart.map((item) => ({
+      name: item.name,
+      unitAmount: this.toMinorUnitAmount(item.price, currency),
+      currency,
+      quantity: item.quantity,
+      image: item.image,
+    }));
   }
 
   private async markOrderAsPaid(session: Stripe.Checkout.Session): Promise<void> {
@@ -435,6 +450,81 @@ export class CheckoutService {
         'cart items must have productId and quantity greater than zero',
       );
     }
+
+    const maxQuantity = this.getCheckoutMaxQuantity();
+    const hasQuantityAboveLimit = cart.some((item) => item.quantity > maxQuantity);
+
+    if (hasQuantityAboveLimit) {
+      throw new BadRequestException(
+        `cart item quantity cannot be greater than ${maxQuantity}`,
+      );
+    }
+  }
+
+  private async resolveCheckoutCart(
+    cart: CheckoutCartItemDto[],
+  ): Promise<ResolvedCheckoutCartItem[]> {
+    return Promise.all(
+      cart.map(async (item) => {
+        const product = await this.wooCommerceClient.get<WooCommerceProduct>(
+          `/products/${item.productId}`,
+        );
+        this.validateWooCommerceSaleableItem(product, 'product');
+
+        const variation = item.variationId
+          ? await this.wooCommerceClient.get<WooCommerceVariation>(
+              `/products/${item.productId}/variations/${item.variationId}`,
+            )
+          : null;
+
+        if (variation) {
+          this.validateWooCommerceSaleableItem(variation, 'variation');
+        }
+
+        this.validateRequestedStock(item, variation ?? product);
+        const price = variation?.price || product.price;
+        this.toMinorUnitAmount(price, 'USD');
+
+        return {
+          productId: item.productId,
+          variationId: item.variationId,
+          quantity: item.quantity,
+          name: product.name,
+          price,
+          image: variation?.image?.src || product.images?.[0]?.src || null,
+        };
+      }),
+    );
+  }
+
+  private validateWooCommerceSaleableItem(
+    item: WooCommerceProduct | WooCommerceVariation,
+    label: 'product' | 'variation',
+  ): void {
+    if (item.status && item.status !== 'publish') {
+      throw new BadRequestException(`Selected ${label} is not available`);
+    }
+
+    if (item.purchasable === false) {
+      throw new BadRequestException(`Selected ${label} is not purchasable`);
+    }
+
+    if (item.stock_status && item.stock_status !== 'instock') {
+      throw new BadRequestException(`Selected ${label} is out of stock`);
+    }
+  }
+
+  private validateRequestedStock(
+    cartItem: CheckoutCartItemDto,
+    wooItem: WooCommerceProduct | WooCommerceVariation,
+  ): void {
+    if (
+      wooItem.manage_stock &&
+      Number.isFinite(Number(wooItem.stock_quantity)) &&
+      cartItem.quantity > Number(wooItem.stock_quantity)
+    ) {
+      throw new BadRequestException('Requested quantity is not available');
+    }
   }
 
   private toWooCommerceLineItem(item: CheckoutCartItemDto) {
@@ -445,7 +535,25 @@ export class CheckoutService {
     };
   }
 
-  private toWooCommercePromotionMeta(promotion?: CheckoutPromotionDto) {
+  private getBundlePromotion(
+    cart: CheckoutCartItemDto[],
+  ): CheckoutBundlePromotion | undefined {
+    if (cart.length !== 1) return undefined;
+
+    const paidQuantity = cart[0].quantity;
+    const freeQuantity = paidQuantity >= 3 ? 2 : paidQuantity === 2 ? 1 : 0;
+    if (!freeQuantity) return undefined;
+
+    return {
+      code: paidQuantity >= 3 ? 'BUY_3_GET_2' : 'BUY_2_GET_1',
+      label: paidQuantity >= 3 ? 'Buy 3 Get 2' : 'Buy 2 Get 1',
+      paidQuantity,
+      freeQuantity,
+      deliveredQuantity: paidQuantity + freeQuantity,
+    };
+  }
+
+  private toWooCommercePromotionMeta(promotion?: CheckoutBundlePromotion) {
     if (
       !promotion ||
       promotion.paidQuantity < 1 ||
@@ -550,6 +658,16 @@ export class CheckoutService {
   private getOptionalNumberConfig(key: string): number | undefined {
     const value = Number(this.configService.get(key));
     return Number.isFinite(value) && value > 0 ? value : undefined;
+  }
+
+  private getCheckoutMaxQuantity(): number {
+    const configuredMaxQuantity = Number(
+      this.configService.get('CHECKOUT_MAX_ITEM_QUANTITY'),
+    );
+
+    return Number.isInteger(configuredMaxQuantity) && configuredMaxQuantity > 0
+      ? configuredMaxQuantity
+      : 12;
   }
 
   private toWooCommerceBillingAddress(createCheckoutDto: CreateCheckoutDto) {
