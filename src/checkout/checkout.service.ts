@@ -58,6 +58,8 @@ type WooCommerceProduct = {
 
 type WooCommerceVariation = {
   id: number;
+  name?: string;
+  title?: string;
   price: string;
   status?: string;
   purchasable?: boolean;
@@ -181,6 +183,7 @@ type ResolvedCheckoutCartItem = {
   name: string;
   price: string;
   image?: string | null;
+  variationTitle?: string;
 };
 
 @Injectable()
@@ -200,7 +203,10 @@ export class CheckoutService {
   ): Promise<CheckoutResponseDto> {
     this.validateCart(createCheckoutDto.cart);
     const resolvedCart = await this.resolveCheckoutCart(createCheckoutDto.cart);
-    const promotion = this.getBundlePromotion(createCheckoutDto.cart);
+    const promotion = this.getBundlePromotion(
+      createCheckoutDto.cart,
+      resolvedCart,
+    );
     const coupon = createCheckoutDto.couponCode
       ? await this.discountsService.validateWelcomeCoupon(
           createCheckoutDto.couponCode,
@@ -582,6 +588,7 @@ export class CheckoutService {
           name: product.name,
           price,
           image: variation?.image?.src || product.images?.[0]?.src || null,
+          variationTitle: variation?.name || variation?.title,
         };
       }),
     );
@@ -673,10 +680,16 @@ export class CheckoutService {
 
   private getBundlePromotion(
     cart: CheckoutCartItemDto[],
+    resolvedCart: ResolvedCheckoutCartItem[] = [],
   ): CheckoutBundlePromotion | undefined {
     if (cart.length !== 1) return undefined;
 
-    const paidQuantity = cart[0].quantity;
+    const variationTitle = this.normalizeBundleTitle(resolvedCart[0]?.variationTitle);
+    const paidQuantity = variationTitle.includes('buy 3 get 2')
+      ? 3
+      : variationTitle.includes('buy 2 get 1')
+        ? 2
+        : cart[0].quantity;
     const freeQuantity = paidQuantity >= 3 ? 2 : paidQuantity === 2 ? 1 : 0;
     if (!freeQuantity) return undefined;
 
@@ -687,6 +700,13 @@ export class CheckoutService {
       freeQuantity,
       deliveredQuantity: paidQuantity + freeQuantity,
     };
+  }
+
+  private normalizeBundleTitle(value?: string): string {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
   }
 
   private toWooCommercePromotionMeta(promotion?: CheckoutBundlePromotion) {
