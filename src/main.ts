@@ -4,7 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
 const FRONTEND_GUARDED_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-const ORIGIN_GUARD_BYPASS_PATHS = new Set(['/checkout/webhook']);
+const ORIGIN_GUARD_BYPASS_PATHS = new Set(['/checkout/webhook', '/tracking/wiio']);
 type RequestOriginGuardRequest = {
   method?: string;
   path?: string;

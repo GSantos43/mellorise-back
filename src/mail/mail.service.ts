@@ -9,6 +9,15 @@ type SendWelcomeDiscountInput = {
   shopUrl: string;
 };
 
+type SendOrderTrackingInput = {
+  to: string;
+  orderNumber: string;
+  trackingCode: string;
+  trackingUrl?: string;
+  carrier?: string;
+  trackOrderUrl: string;
+};
+
 type ResendEmailPayload = {
   from: string;
   to: string[];
@@ -27,25 +36,46 @@ export class MailService {
   async sendWelcomeDiscount(input: SendWelcomeDiscountInput): Promise<boolean> {
     if (!this.isWelcomeDiscountEmailEnabled) return false;
 
-    const apiKey = this.configService.get<string>('RESEND_API_KEY');
-    const from = this.configService.get<string>('MAIL_FROM');
-
-    if (!apiKey || !from) {
-      this.logger.warn(
-        'Welcome discount email skipped because RESEND_API_KEY or MAIL_FROM is not configured',
-      );
-      return false;
-    }
+    const sender = this.getSenderConfig('Welcome discount email');
+    if (!sender) return false;
 
     const replyTo = this.configService.get<string>('MAIL_REPLY_TO');
     const payload: ResendEmailPayload = {
-      from,
+      from: sender.from,
       to: [input.to],
       subject: `Your MelloRise ${input.amount}% discount code`,
       html: this.buildWelcomeDiscountHtml(input),
       text: this.buildWelcomeDiscountText(input),
       ...(replyTo ? { reply_to: [replyTo] } : {}),
     };
+
+    return this.sendResendEmail(sender.apiKey, payload, 'welcome discount');
+  }
+
+  async sendOrderTracking(input: SendOrderTrackingInput): Promise<boolean> {
+    if (!input.to || !this.isTrackingEmailEnabled) return false;
+
+    const sender = this.getSenderConfig('Order tracking email');
+    if (!sender) return false;
+
+    const replyTo = this.configService.get<string>('MAIL_REPLY_TO');
+    const payload: ResendEmailPayload = {
+      from: sender.from,
+      to: [input.to],
+      subject: `Your MelloRise order ${input.orderNumber} tracking is ready`,
+      html: this.buildOrderTrackingHtml(input),
+      text: this.buildOrderTrackingText(input),
+      ...(replyTo ? { reply_to: [replyTo] } : {}),
+    };
+
+    return this.sendResendEmail(sender.apiKey, payload, 'order tracking');
+  }
+
+  private async sendResendEmail(
+    apiKey: string,
+    payload: ResendEmailPayload,
+    label: string,
+  ): Promise<boolean> {
 
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -59,7 +89,7 @@ export class MailService {
     if (!response.ok) {
       const errorText = await response.text().catch(() => '');
       this.logger.warn(
-        `Resend rejected welcome discount email with status ${response.status}: ${errorText}`,
+        `Resend rejected ${label} email with status ${response.status}: ${errorText}`,
       );
       return false;
     }
@@ -67,10 +97,30 @@ export class MailService {
     return true;
   }
 
+  private getSenderConfig(label: string): { apiKey: string; from: string } | null {
+    const apiKey = this.configService.get<string>('RESEND_API_KEY');
+    const from = this.configService.get<string>('MAIL_FROM');
+
+    if (!apiKey || !from) {
+      this.logger.warn(
+        `${label} skipped because RESEND_API_KEY or MAIL_FROM is not configured`,
+      );
+      return null;
+    }
+
+    return { apiKey, from };
+  }
+
   private get isWelcomeDiscountEmailEnabled(): boolean {
     return (
       this.configService.get<string>('MAIL_WELCOME_DISCOUNT_ENABLED') ?? 'true'
     )
+      .trim()
+      .toLowerCase() !== 'false';
+  }
+
+  private get isTrackingEmailEnabled(): boolean {
+    return (this.configService.get<string>('MAIL_TRACKING_ENABLED') ?? 'true')
       .trim()
       .toLowerCase() !== 'false';
   }
@@ -105,6 +155,47 @@ export class MailService {
       `Expires: ${this.formatExpiration(input.expiresAt)}`,
       `Shop: ${input.shopUrl}`,
     ].join('\n');
+  }
+
+  private buildOrderTrackingHtml(input: SendOrderTrackingInput): string {
+    const orderNumber = this.escapeHtml(input.orderNumber);
+    const trackingCode = this.escapeHtml(input.trackingCode);
+    const carrier = this.escapeHtml(input.carrier || 'Shipping partner');
+    const trackingUrl = input.trackingUrl ? this.escapeHtml(input.trackingUrl) : '';
+    const trackOrderUrl = this.escapeHtml(input.trackOrderUrl);
+
+    return `
+      <div style="margin:0;background:#f7fbfa;padding:32px 16px;font-family:Arial,sans-serif;color:#102829;">
+        <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #dce8e7;border-radius:16px;padding:28px;">
+          <p style="margin:0 0 10px;color:#168f78;font-size:13px;font-weight:700;text-transform:uppercase;">Order update</p>
+          <h1 style="margin:0 0 12px;font-size:28px;line-height:1.15;">Your MelloRise order is on the way</h1>
+          <p style="margin:0 0 22px;color:#4f5f61;font-size:16px;line-height:1.5;">Order ${orderNumber} now has tracking from ${carrier}.</p>
+          <div style="border:1px dashed #77cdfa;border-radius:12px;background:#eff9ff;padding:18px;text-align:center;">
+            <p style="margin:0 0 8px;color:#4f5f61;font-size:13px;font-weight:700;text-transform:uppercase;">Tracking code</p>
+            <p style="margin:0;font-size:26px;font-weight:800;letter-spacing:1.5px;color:#102829;">${trackingCode}</p>
+          </div>
+          ${
+            trackingUrl
+              ? `<a href="${trackingUrl}" style="display:inline-block;margin-top:22px;background:#31d6b0;color:#062626;text-decoration:none;font-weight:800;border-radius:999px;padding:14px 22px;">Track with carrier</a>`
+              : ''
+          }
+          <p style="margin:18px 0 0;color:#4f5f61;font-size:14px;line-height:1.5;">You can also check your status any time on the MelloRise tracking page.</p>
+          <a href="${trackOrderUrl}" style="display:inline-block;margin-top:14px;color:#0a72b8;text-decoration:underline;font-weight:700;">Open MelloRise tracking</a>
+        </div>
+      </div>
+    `;
+  }
+
+  private buildOrderTrackingText(input: SendOrderTrackingInput): string {
+    return [
+      `Your MelloRise order ${input.orderNumber} is on the way.`,
+      `Carrier: ${input.carrier || 'Shipping partner'}`,
+      `Tracking code: ${input.trackingCode}`,
+      input.trackingUrl ? `Carrier tracking: ${input.trackingUrl}` : '',
+      `MelloRise tracking: ${input.trackOrderUrl}`,
+    ]
+      .filter(Boolean)
+      .join('\n');
   }
 
   private formatExpiration(value: string): string {
