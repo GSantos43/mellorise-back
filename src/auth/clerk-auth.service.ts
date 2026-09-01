@@ -37,11 +37,7 @@ export class ClerkAuthService {
 
     this.assertConfigured();
 
-    const claims = await verifyToken(token, {
-      secretKey: this.secretKey || undefined,
-      jwtKey: this.jwtKey || undefined,
-      authorizedParties: this.authorizedParties.length ? this.authorizedParties : undefined,
-    });
+    const claims = await this.verifySessionToken(token);
     const userId = typeof claims.sub === 'string' ? claims.sub : '';
 
     if (!userId) {
@@ -75,6 +71,18 @@ export class ClerkAuthService {
     const header = authorizationHeader?.trim() ?? '';
     const [, token] = header.match(/^Bearer\s+(.+)$/i) ?? [];
     return token?.trim() ?? '';
+  }
+
+  private async verifySessionToken(token: string) {
+    try {
+      return await verifyToken(token, {
+        secretKey: this.secretKey || undefined,
+        jwtKey: this.jwtKey || undefined,
+        authorizedParties: this.authorizedParties.length ? this.authorizedParties : undefined,
+      });
+    } catch {
+      throw new UnauthorizedException('Invalid Clerk session.');
+    }
   }
 
   private getAuthorizedParties(): string[] {
