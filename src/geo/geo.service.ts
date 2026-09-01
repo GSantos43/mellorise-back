@@ -20,7 +20,9 @@ type IpApiResponse = {
   country_code?: string;
   country?: string;
   error?: boolean;
+  success?: boolean;
   reason?: string;
+  message?: string;
 };
 
 export type CheckoutEligibility = {
@@ -135,7 +137,7 @@ export class GeoService {
 
   private async lookupIpCountry(ipAddress: string): Promise<string | null> {
     const providerUrl = this.configService.get<string>('GEO_IP_PROVIDER_URL')?.trim() ||
-      'https://ipapi.co/{ip}/json/';
+      'https://ipwho.is/{ip}';
     const url = providerUrl.replace('{ip}', encodeURIComponent(ipAddress));
 
     try {
@@ -148,9 +150,9 @@ export class GeoService {
         response.data.country_code || response.data.country,
       );
 
-      if (!countryCode || response.data.error) {
+      if (!countryCode || response.data.error || response.data.success === false) {
         this.logger.warn(
-          `IP geolocation failed for ${ipAddress}: ${response.data.reason || 'country unavailable'}`,
+          `IP geolocation failed for ${ipAddress}: ${response.data.reason || response.data.message || 'country unavailable'}`,
         );
         return null;
       }
