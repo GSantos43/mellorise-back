@@ -8,6 +8,7 @@
     "start:dev": "nest start --watch"
   },
   "dependencies": {
+    "@clerk/backend": "^3.17.0",
     "@nestjs/axios": "^4.0.0",
     "@nestjs/common": "^11.0.0",
     "@nestjs/config": "^4.0.0",
