@@ -47,6 +47,16 @@ type TrackingDetails = {
   updatedAt: string | null;
 };
 
+type NormalizedWiioTrackingPayload = {
+  orderId?: number;
+  orderNumber?: string;
+  trackingCode: string;
+  carrier?: string;
+  trackingUrl?: string;
+  status?: string;
+  shippedAt?: string;
+};
+
 @Injectable()
 export class TrackingService {
   private readonly logger = new Logger(TrackingService.name);
@@ -92,20 +102,21 @@ export class TrackingService {
   ): Promise<{ received: true; orderId: number; emailQueued: boolean }> {
     this.validateWebhookSecret(webhookSecret);
 
-    const order = await this.findOrderByWebhookPayload(dto);
+    const payload = this.normalizeWiioPayload(dto);
+    const order = await this.findOrderByWebhookPayload(payload);
     const updatedOrder = await this.wooCommerceClient.put<
       WooCommerceOrder,
       { meta_data: Array<{ key: string; value: string }> }
     >(`/orders/${order.id}`, {
-      meta_data: this.toTrackingMeta(dto),
+      meta_data: this.toTrackingMeta(payload),
     });
 
     const emailQueued = await this.mailService.sendOrderTracking({
       to: updatedOrder.billing?.email || order.billing?.email || '',
       orderNumber: updatedOrder.number ?? order.number ?? String(order.id),
-      trackingCode: dto.trackingCode,
-      trackingUrl: dto.trackingUrl,
-      carrier: dto.carrier,
+      trackingCode: payload.trackingCode,
+      trackingUrl: payload.trackingUrl,
+      carrier: payload.carrier,
       trackOrderUrl: this.buildTrackOrderUrl(updatedOrder.number ?? order.number ?? String(order.id)),
     });
 
@@ -178,7 +189,7 @@ export class TrackingService {
   }
 
   private async findOrderByWebhookPayload(
-    dto: WiioTrackingWebhookDto,
+    dto: NormalizedWiioTrackingPayload,
   ): Promise<WooCommerceOrder> {
     if (dto.orderId) {
       return this.wooCommerceClient.get<WooCommerceOrder>(`/orders/${dto.orderId}`);
@@ -227,7 +238,7 @@ export class TrackingService {
     };
   }
 
-  private toTrackingMeta(dto: WiioTrackingWebhookDto) {
+  private toTrackingMeta(dto: NormalizedWiioTrackingPayload) {
     return [
       {
         key: '_wiio_tracking_code',
@@ -254,6 +265,40 @@ export class TrackingService {
         value: new Date().toISOString(),
       },
     ];
+  }
+
+  private normalizeWiioPayload(
+    dto: WiioTrackingWebhookDto,
+  ): NormalizedWiioTrackingPayload {
+    const trackingCode = this.firstString(
+      dto.trackingCode,
+      dto.tracking_code,
+      dto.trackingNumber,
+      dto.tracking_number,
+      dto.trackNumber,
+    );
+
+    if (!trackingCode) {
+      throw new BadRequestException('Wiio payload must include a tracking code.');
+    }
+
+    return {
+      orderId: this.firstPositiveNumber(dto.orderId, dto.order_id, dto.wooOrderId),
+      orderNumber: this.firstString(dto.orderNumber, dto.order_number, dto.orderNo),
+      trackingCode,
+      carrier: this.firstString(dto.carrier, dto.logisticName) || 'Wiio',
+      trackingUrl: this.firstString(dto.trackingUrl, dto.tracking_url, dto.trackUrl),
+      status: this.firstString(dto.status, dto.orderStatus) || 'shipped',
+      shippedAt: this.firstString(dto.shippedAt, dto.shipped_at),
+    };
+  }
+
+  private firstString(...values: Array<string | undefined>): string | undefined {
+    return values.map((value) => value?.trim()).find(Boolean);
+  }
+
+  private firstPositiveNumber(...values: Array<number | undefined>): number | undefined {
+    return values.find((value) => Number.isInteger(value) && Number(value) > 0);
   }
 
   private validateWebhookSecret(webhookSecret?: string): void {

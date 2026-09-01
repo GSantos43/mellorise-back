@@ -4,7 +4,7 @@ import Stripe from 'stripe';
 import { WooCommerceClient } from '../woocommerce/woocommerce.client';
 import { StripeService } from '../payments/stripe.service';
 import { DiscountsService } from '../discounts/discounts.service';
-import { WiioService } from '../fulfillment/wiio.service';
+import { WiioDispatchStatus, WiioService } from '../fulfillment/wiio.service';
 import {
   CheckoutAddressDto,
   CheckoutCartItemDto,
@@ -505,7 +505,7 @@ export class CheckoutService {
 
   private async updateWiioDispatchStatus(
     orderId: number,
-    wiioStatus: 'disabled' | 'missing_endpoint' | 'sent' | 'failed',
+    wiioStatus: WiioDispatchStatus,
   ): Promise<void> {
     if (wiioStatus === 'disabled') return;
 
