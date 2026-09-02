@@ -6,6 +6,12 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { createClerkClient, verifyToken } from '@clerk/backend';
 
+const DEFAULT_FRONTEND_ORIGINS = [
+  'https://mellorise.shop',
+  'https://www.mellorise.shop',
+  'https://mellorise-front.vercel.app',
+];
+
 export type AuthenticatedClerkCustomer = {
   userId: string;
   email: string;
@@ -86,7 +92,7 @@ export class ClerkAuthService {
   }
 
   private getAuthorizedParties(): string[] {
-    return [
+    const configuredParties = [
       this.configService.get<string>('CLERK_AUTHORIZED_PARTIES'),
       this.configService.get<string>('FRONTEND_ALLOWED_ORIGINS'),
       this.configService.get<string>('FRONTEND_ORIGIN'),
@@ -96,5 +102,7 @@ export class ClerkAuthService {
       .flatMap((value) => String(value).split(','))
       .map((value) => value.trim())
       .filter(Boolean);
+
+    return [...new Set([...configuredParties, ...DEFAULT_FRONTEND_ORIGINS])];
   }
 }

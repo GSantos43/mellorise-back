@@ -5,6 +5,11 @@ import { AppModule } from './app.module';
 
 const FRONTEND_GUARDED_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const ORIGIN_GUARD_BYPASS_PATHS = new Set(['/checkout/webhook', '/tracking/wiio']);
+const DEFAULT_FRONTEND_ORIGINS = [
+  'https://mellorise.shop',
+  'https://www.mellorise.shop',
+  'https://mellorise-front.vercel.app',
+];
 type RequestOriginGuardRequest = {
   method?: string;
   path?: string;
@@ -88,7 +93,7 @@ function getAllowedOrigins(configService: ConfigService): string[] {
     .map(normalizeOrigin)
     .filter(Boolean);
 
-  return [...new Set(configuredOrigins)];
+  return [...new Set([...configuredOrigins, ...DEFAULT_FRONTEND_ORIGINS])];
 }
 
 function normalizeOrigin(value: string): string {
