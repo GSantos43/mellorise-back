@@ -2,6 +2,7 @@ import { ArgumentMetadata, BadRequestException, InternalServerErrorException, Va
 import { ConfigService } from '@nestjs/config';
 import * as assert from 'node:assert/strict';
 import { CreateCheckoutDto } from '../checkout/dto/create-checkout.dto';
+import { CreateWelcomeDiscountDto } from '../discounts/dto/create-welcome-discount.dto';
 import { StripeService } from '../payments/stripe.service';
 
 const validationPipe = new ValidationPipe({
@@ -17,6 +18,12 @@ const validationPipe = new ValidationPipe({
 const checkoutMetadata: ArgumentMetadata = {
   type: 'body',
   metatype: CreateCheckoutDto,
+  data: '',
+};
+
+const welcomeDiscountMetadata: ArgumentMetadata = {
+  type: 'body',
+  metatype: CreateWelcomeDiscountDto,
   data: '',
 };
 
@@ -97,6 +104,22 @@ async function main() {
   assert.equal(
     Object.prototype.hasOwnProperty.call(validatedPayload.shippingProtection, 'amount'),
     false,
+  );
+
+  await assert.rejects(
+    () =>
+      validationPipe.transform(
+        {
+          email: 'customer@example.com',
+          visitorId: 'visitor-123',
+        },
+        welcomeDiscountMetadata,
+      ),
+    (error: unknown) => {
+      assert(error instanceof BadRequestException);
+      assert.match(JSON.stringify(error.getResponse()), /email should not exist/);
+      return true;
+    },
   );
 
   assert.throws(

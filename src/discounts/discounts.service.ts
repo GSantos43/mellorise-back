@@ -53,8 +53,9 @@ export class DiscountsService {
 
   async createWelcomeDiscount(
     input: CreateWelcomeDiscountDto,
+    authenticatedEmail: string,
   ): Promise<WelcomeDiscountResponseDto> {
-    const email = this.normalizeEmail(input.email);
+    const email = this.normalizeEmail(authenticatedEmail);
     await this.assertFirstPurchaseEmail(email);
 
     const expiresAt = this.getExpirationDate();
