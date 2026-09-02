@@ -18,6 +18,13 @@ type SendOrderTrackingInput = {
   trackOrderUrl: string;
 };
 
+type SendContactMessageInput = {
+  name?: string;
+  email: string;
+  phone?: string;
+  comment: string;
+};
+
 type ResendEmailPayload = {
   from: string;
   to: string[];
@@ -69,6 +76,25 @@ export class MailService {
     };
 
     return this.sendResendEmail(sender.apiKey, payload, 'order tracking');
+  }
+
+  async sendContactMessage(input: SendContactMessageInput): Promise<boolean> {
+    const sender = this.getSenderConfig('Contact email');
+    if (!sender) return false;
+
+    const recipient =
+      this.configService.get<string>('MAIL_CONTACT_TO') ||
+      'mellorise.support@gmail.com';
+    const payload: ResendEmailPayload = {
+      from: sender.from,
+      to: [recipient],
+      subject: `New MelloRise contact message from ${input.email}`,
+      html: this.buildContactMessageHtml(input),
+      text: this.buildContactMessageText(input),
+      reply_to: [input.email],
+    };
+
+    return this.sendResendEmail(sender.apiKey, payload, 'contact');
   }
 
   private async sendResendEmail(
@@ -196,6 +222,39 @@ export class MailService {
     ]
       .filter(Boolean)
       .join('\n');
+  }
+
+  private buildContactMessageHtml(input: SendContactMessageInput): string {
+    const name = this.escapeHtml(input.name || 'Not provided');
+    const email = this.escapeHtml(input.email);
+    const phone = this.escapeHtml(input.phone || 'Not provided');
+    const comment = this.escapeHtml(input.comment).replace(/\n/g, '<br>');
+
+    return `
+      <div style="margin:0;background:#f7fbfa;padding:32px 16px;font-family:Arial,sans-serif;color:#102829;">
+        <div style="max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #dce8e7;border-radius:16px;padding:28px;">
+          <p style="margin:0 0 10px;color:#168f78;font-size:13px;font-weight:700;text-transform:uppercase;">Contact form</p>
+          <h1 style="margin:0 0 18px;font-size:28px;line-height:1.15;">New MelloRise message</h1>
+          <div style="margin:0 0 18px;border-top:1px solid #e4eeee;border-bottom:1px solid #e4eeee;padding:14px 0;color:#4f5f61;font-size:15px;line-height:1.55;">
+            <p style="margin:0;"><strong style="color:#102829;">Name:</strong> ${name}</p>
+            <p style="margin:6px 0 0;"><strong style="color:#102829;">Email:</strong> ${email}</p>
+            <p style="margin:6px 0 0;"><strong style="color:#102829;">Phone:</strong> ${phone}</p>
+          </div>
+          <div style="font-size:16px;line-height:1.6;color:#102829;">${comment}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  private buildContactMessageText(input: SendContactMessageInput): string {
+    return [
+      'New MelloRise contact message',
+      `Name: ${input.name || 'Not provided'}`,
+      `Email: ${input.email}`,
+      `Phone: ${input.phone || 'Not provided'}`,
+      '',
+      input.comment,
+    ].join('\n');
   }
 
   private formatExpiration(value: string): string {
