@@ -74,7 +74,9 @@ type WooCommerceVariation = {
 type WooCommerceOrderPayload = {
   payment_method: string;
   payment_method_title: string;
+  status?: string;
   set_paid: boolean;
+  transaction_id?: string;
   customer_note?: string;
   line_items: Array<{
     product_id: number;
@@ -114,6 +116,16 @@ type WooCommerceOrderPayload = {
   };
   coupon_lines?: Array<{
     code: string;
+  }>;
+  fee_lines?: Array<{
+    name: string;
+    total: string;
+    tax_status?: string;
+  }>;
+  shipping_lines?: Array<{
+    method_id: string;
+    method_title: string;
+    total: string;
   }>;
   meta_data: Array<{
     key: string;
@@ -214,15 +226,12 @@ export class CheckoutService {
         )
       : null;
 
-    const order = await this.createPendingWooCommerceOrder(
-      createCheckoutDto,
-      promotion,
-    );
+    const currency = this.getCheckoutCurrency();
     let lineItems = await this.buildStripeLineItems(
       resolvedCart,
-      order.currency,
+      currency,
     );
-    const shipping = this.getShippingDecision(createCheckoutDto.cart, order.currency);
+    const shipping = this.getShippingDecision(createCheckoutDto.cart, currency);
 
     if (coupon) {
       lineItems = this.applyPercentDiscount(lineItems, Number(coupon.amount));
@@ -230,7 +239,7 @@ export class CheckoutService {
 
     const shippingProtection = this.getShippingProtectionDecision(
       Boolean(createCheckoutDto.shippingProtection?.enabled),
-      order.currency,
+      currency,
     );
     if (shippingProtection.enabled) {
       lineItems.push({
@@ -243,18 +252,14 @@ export class CheckoutService {
 
     try {
       const session = await this.stripeService.createCheckoutSession({
-        orderId: order.id,
         lineItems,
         shipping,
-        successUrl: this.addOrderIdToSuccessUrl(
-          createCheckoutDto.successUrl,
-          order.id,
-        ),
+        successUrl: createCheckoutDto.successUrl,
         cancelUrl: createCheckoutDto.cancelUrl,
         customerEmail:
           createCheckoutDto.customerEmail || createCheckoutDto.customer?.email,
         metadata: {
-          wooCommerceOrderId: String(order.id),
+          checkoutCart: JSON.stringify(createCheckoutDto.cart),
           shippingMethod: shipping.displayName,
           shippingAmount: String(shipping.amount),
           freeShipping: String(shipping.isFree),
@@ -272,73 +277,20 @@ export class CheckoutService {
         },
       });
 
-      await this.wooCommerceClient.put<
-        WooCommerceOrder,
-        WooCommerceOrderUpdatePayload
-      >(`/orders/${order.id}`, {
-        fee_lines: shippingProtection.enabled
-          ? [
-              {
-                name: shippingProtection.displayName,
-                total: this.toCurrencyUnitAmount(
-                  shippingProtection.amount,
-                  order.currency,
-                ),
-                tax_status: 'none',
-              },
-            ]
-          : undefined,
-        shipping_lines: [
-          {
-            method_id: shipping.isFree
-              ? 'headless_free_shipping'
-              : 'headless_standard_shipping',
-            method_title: shipping.displayName,
-            total: this.toCurrencyUnitAmount(shipping.amount, order.currency),
-          },
-        ],
-        meta_data: [
-          {
-            key: 'stripe_checkout_session_id',
-            value: session.id,
-          },
-          {
-            key: '_headless_shipping_method',
-            value: shipping.displayName,
-          },
-          {
-            key: '_headless_shipping_amount',
-            value: String(shipping.amount / 100),
-          },
-          {
-            key: '_headless_free_shipping',
-            value: String(shipping.isFree),
-          },
-          {
-            key: '_headless_shipping_protection',
-            value: String(shippingProtection.enabled),
-          },
-          {
-            key: '_headless_shipping_protection_amount',
-            value: this.toCurrencyUnitAmount(
-              shippingProtection.amount,
-              order.currency,
-            ),
-          },
-        ],
-      });
-
       return {
-        orderId: order.id,
-        status: order.status,
-        total: order.total,
-        currency: order.currency,
+        orderId: null,
+        status: 'pending_payment',
+        total: this.toCurrencyUnitAmount(
+          this.sumLineItemAmounts(lineItems) +
+            (shipping.isFree ? 0 : shipping.amount),
+          currency,
+        ),
+        currency,
         checkoutUrl: session.url ?? '',
         sessionId: session.id,
-        paymentUrl: order.payment_url ?? null,
+        paymentUrl: null,
       };
     } catch (error) {
-      await this.markOrderAsFailed(order.id);
       throw error;
     }
   }
@@ -346,7 +298,13 @@ export class CheckoutService {
   async handleStripeWebhook(event: Stripe.Event): Promise<{ received: true }> {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object as Stripe.Checkout.Session;
-      await this.markOrderAsPaid(session);
+      const existingOrderId = this.getOrderIdFromSession(session);
+
+      if (existingOrderId) {
+        await this.markOrderAsPaid(session);
+      } else {
+        await this.createPaidWooCommerceOrderFromSession(session);
+      }
     }
 
     if (event.type === 'checkout.session.expired') {
@@ -361,20 +319,59 @@ export class CheckoutService {
     return { received: true };
   }
 
-  private async createPendingWooCommerceOrder(
+  private async createWooCommerceOrder(
     createCheckoutDto: CreateCheckoutDto,
     promotion?: CheckoutBundlePromotion,
+    payment?: {
+      status?: string;
+      setPaid?: boolean;
+      transactionId?: string;
+      stripeSessionId?: string;
+      shipping?: CheckoutShippingDecision;
+      shippingProtection?: ShippingProtectionDecision;
+      stripeAddressUpdate?: Partial<WooCommerceOrderPayload>;
+    },
   ): Promise<WooCommerceOrder> {
+    const setPaid = payment?.setPaid ?? false;
+
     return this.wooCommerceClient.post<WooCommerceOrder, WooCommerceOrderPayload>(
       '/orders',
       {
         payment_method: 'stripe',
         payment_method_title: 'Stripe',
-        set_paid: false,
+        set_paid: setPaid,
+        status: payment?.status,
+        transaction_id: payment?.transactionId,
         customer_note: createCheckoutDto.customerNote,
         line_items: createCheckoutDto.cart.flatMap((item, index) =>
           this.toWooCommerceLineItems(item, index === 0 ? promotion : undefined),
         ),
+        fee_lines: payment?.shippingProtection?.enabled
+          ? [
+              {
+                name: payment.shippingProtection.displayName,
+                total: this.toCurrencyUnitAmount(
+                  payment.shippingProtection.amount,
+                  payment.shippingProtection.currency,
+                ),
+                tax_status: 'none',
+              },
+            ]
+          : undefined,
+        shipping_lines: payment?.shipping
+          ? [
+              {
+                method_id: payment.shipping.isFree
+                  ? 'headless_free_shipping'
+                  : 'headless_standard_shipping',
+                method_title: payment.shipping.displayName,
+                total: this.toCurrencyUnitAmount(
+                  payment.shipping.amount,
+                  payment.shipping.currency,
+                ),
+              },
+            ]
+          : undefined,
         meta_data: [
           {
             key: '_headless_checkout',
@@ -393,11 +390,41 @@ export class CheckoutService {
               ]
             : []),
           ...this.toWooCommercePromotionMeta(promotion),
+          ...(payment?.stripeSessionId
+            ? [
+                {
+                  key: 'stripe_checkout_session_id',
+                  value: payment.stripeSessionId,
+                },
+              ]
+            : []),
+          ...(setPaid
+            ? [
+                {
+                  key: '_wiio_ready_for_sync',
+                  value: 'true',
+                },
+                {
+                  key: '_wiio_sync_source',
+                  value: 'stripe_checkout_webhook',
+                },
+              ]
+            : []),
+          ...(payment?.shipping
+            ? this.toWooCommerceShippingMeta(payment.shipping)
+            : []),
+          ...(payment?.shippingProtection
+            ? this.toWooCommerceShippingProtectionMeta(
+                payment.shippingProtection,
+              )
+            : []),
         ],
-        billing: this.toWooCommerceBillingAddress(createCheckoutDto),
-        shipping: this.toWooCommerceShippingAddress(
-          createCheckoutDto.shippingAddress,
-        ),
+        billing:
+          payment?.stripeAddressUpdate?.billing ||
+          this.toWooCommerceBillingAddress(createCheckoutDto),
+        shipping:
+          payment?.stripeAddressUpdate?.shipping ||
+          this.toWooCommerceShippingAddress(createCheckoutDto.shippingAddress),
         coupon_lines: createCheckoutDto.couponCode
           ? [
               {
@@ -470,12 +497,105 @@ export class CheckoutService {
     await this.updateWiioDispatchStatus(orderId, wiioStatus);
   }
 
+  private async createPaidWooCommerceOrderFromSession(
+    session: Stripe.Checkout.Session,
+  ): Promise<void> {
+    const createCheckoutDto = this.getCheckoutDtoFromSession(session);
+    this.validateCart(createCheckoutDto.cart);
+
+    const resolvedCart = await this.resolveCheckoutCart(createCheckoutDto.cart);
+    const promotion = this.getBundlePromotion(
+      createCheckoutDto.cart,
+      resolvedCart,
+    );
+    const currency = this.getCheckoutCurrency();
+    const shipping = this.getShippingDecision(createCheckoutDto.cart, currency);
+    const shippingProtection = this.getShippingProtectionDecision(
+      session.metadata?.shippingProtection === 'true',
+      currency,
+    );
+    const stripeAddressUpdate = this.toWooCommerceAddressUpdateFromStripe(session);
+
+    const paidOrder = await this.createWooCommerceOrder(
+      createCheckoutDto,
+      promotion,
+      {
+        status: 'processing',
+        setPaid: true,
+        transactionId:
+          typeof session.payment_intent === 'string'
+            ? session.payment_intent
+            : session.payment_intent?.id,
+        stripeSessionId: session.id,
+        shipping,
+        shippingProtection,
+        stripeAddressUpdate,
+      },
+    );
+
+    const wiioStatus = await this.wiioService.dispatchPaidOrder(
+      paidOrder,
+      session,
+    );
+
+    await this.updateWiioDispatchStatus(paidOrder.id, wiioStatus);
+  }
+
   private getOrderIdFromSession(session: Stripe.Checkout.Session): number | null {
     const rawOrderId =
       session.metadata?.wooCommerceOrderId || session.client_reference_id;
     const orderId = Number(rawOrderId);
 
     return Number.isInteger(orderId) && orderId > 0 ? orderId : null;
+  }
+
+  private getCheckoutDtoFromSession(
+    session: Stripe.Checkout.Session,
+  ): CreateCheckoutDto {
+    const cart = this.parseCheckoutCart(session.metadata?.checkoutCart);
+    const customerDetails = session.customer_details;
+
+    return {
+      cart,
+      successUrl: '',
+      cancelUrl: '',
+      customerEmail:
+        customerDetails?.email || session.customer_email || undefined,
+      couponCode: session.metadata?.couponCode || undefined,
+      customer: {
+        name: customerDetails?.name ?? undefined,
+        email: customerDetails?.email ?? undefined,
+        phone:
+          customerDetails?.phone ||
+          session.metadata?.customerPhone ||
+          undefined,
+      },
+      shippingProtection: {
+        enabled: session.metadata?.shippingProtection === 'true',
+      },
+    };
+  }
+
+  private parseCheckoutCart(value?: string): CheckoutCartItemDto[] {
+    if (!value) {
+      throw new BadRequestException('Stripe session is missing checkout cart');
+    }
+
+    try {
+      const cart = JSON.parse(value) as CheckoutCartItemDto[];
+      if (!Array.isArray(cart)) {
+        throw new Error('checkoutCart is not an array');
+      }
+
+      return cart.map((item) => ({
+        productId: Number(item.productId),
+        variationId: item.variationId ? Number(item.variationId) : undefined,
+        quantity: Number(item.quantity),
+      }));
+    } catch (error) {
+      this.logger.warn(`Invalid checkout cart metadata: ${(error as Error).message}`);
+      throw new BadRequestException('Stripe session has invalid checkout cart');
+    }
   }
 
   private addOrderIdToSuccessUrl(successUrl: string, orderId: number): string {
@@ -826,6 +946,14 @@ export class CheckoutService {
       : 12;
   }
 
+  private getCheckoutCurrency(): string {
+    return (
+      this.configService.get<string>('CHECKOUT_CURRENCY') ||
+      this.configService.get<string>('WOOCOMMERCE_CURRENCY') ||
+      'USD'
+    ).toUpperCase();
+  }
+
   private toWooCommerceBillingAddress(createCheckoutDto: CreateCheckoutDto) {
     const address = createCheckoutDto.billingAddress;
     const customer = createCheckoutDto.customer;
@@ -866,6 +994,43 @@ export class CheckoutService {
       postcode: address.postcode,
       country: address.country,
     };
+  }
+
+  private toWooCommerceShippingMeta(
+    shipping: CheckoutShippingDecision,
+  ): WooCommerceOrderPayload['meta_data'] {
+    return [
+      {
+        key: '_headless_shipping_method',
+        value: shipping.displayName,
+      },
+      {
+        key: '_headless_shipping_amount',
+        value: this.toCurrencyUnitAmount(shipping.amount, shipping.currency),
+      },
+      {
+        key: '_headless_free_shipping',
+        value: String(shipping.isFree),
+      },
+    ];
+  }
+
+  private toWooCommerceShippingProtectionMeta(
+    shippingProtection: ShippingProtectionDecision,
+  ): WooCommerceOrderPayload['meta_data'] {
+    return [
+      {
+        key: '_headless_shipping_protection',
+        value: String(shippingProtection.enabled),
+      },
+      {
+        key: '_headless_shipping_protection_amount',
+        value: this.toCurrencyUnitAmount(
+          shippingProtection.amount,
+          shippingProtection.currency,
+        ),
+      },
+    ];
   }
 
   private toWooCommerceAddressUpdateFromStripe(
@@ -930,6 +1095,13 @@ export class CheckoutService {
       ...item,
       unitAmount: Math.max(1, Math.round(item.unitAmount * multiplier)),
     }));
+  }
+
+  private sumLineItemAmounts(lineItems: CheckoutLineItem[]): number {
+    return lineItems.reduce(
+      (total, item) => total + item.unitAmount * item.quantity,
+      0,
+    );
   }
 
   private toMinorUnitAmount(total: string, currency: string): number {

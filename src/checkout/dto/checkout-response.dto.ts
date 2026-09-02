@@ -1,5 +1,5 @@
 export class CheckoutResponseDto {
-  orderId: number;
+  orderId: number | null;
   status: string;
   total: string;
   currency: string;

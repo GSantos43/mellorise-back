@@ -17,7 +17,7 @@ type CheckoutSessionLineItem = {
 };
 
 type CreateCheckoutSessionInput = {
-  orderId: number;
+  orderId?: number;
   lineItems: CheckoutSessionLineItem[];
   shipping: CheckoutSessionShipping;
   successUrl: string;
@@ -70,7 +70,7 @@ export class StripeService {
         success_url: input.successUrl,
         cancel_url: input.cancelUrl,
         customer_email: input.customerEmail,
-        client_reference_id: String(input.orderId),
+        client_reference_id: input.orderId ? String(input.orderId) : undefined,
         metadata: input.metadata,
         billing_address_collection: 'required',
         phone_number_collection: {
