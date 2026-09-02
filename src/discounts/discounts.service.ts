@@ -88,7 +88,7 @@ export class DiscountsService {
       ],
     });
 
-    const welcomeDiscount = {
+    const welcomeDiscount: WelcomeDiscountResponseDto = {
       code: coupon.code.toUpperCase(),
       email,
       amount: coupon.amount,
@@ -96,7 +96,7 @@ export class DiscountsService {
       expiresAt,
     };
 
-    await this.sendWelcomeDiscountEmail(welcomeDiscount);
+    welcomeDiscount.emailSent = await this.sendWelcomeDiscountEmail(welcomeDiscount);
 
     return welcomeDiscount;
   }
@@ -227,9 +227,9 @@ export class DiscountsService {
 
   private async sendWelcomeDiscountEmail(
     discount: WelcomeDiscountResponseDto,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
-      await this.mailService.sendWelcomeDiscount({
+      return await this.mailService.sendWelcomeDiscount({
         to: discount.email,
         code: discount.code,
         amount: discount.amount,
@@ -241,6 +241,7 @@ export class DiscountsService {
         `Could not send welcome discount email to ${discount.email}`,
         error instanceof Error ? error.stack : undefined,
       );
+      return false;
     }
   }
 

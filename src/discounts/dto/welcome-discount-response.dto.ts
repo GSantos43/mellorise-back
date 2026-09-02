@@ -4,4 +4,5 @@ export class WelcomeDiscountResponseDto {
   amount: string;
   discountType: string;
   expiresAt: string;
+  emailSent?: boolean;
 }
