@@ -5,7 +5,6 @@ import {
   IsBoolean,
   IsEmail,
   IsInt,
-  IsNumber,
   IsNotEmpty,
   IsObject,
   IsOptional,
@@ -37,12 +36,6 @@ export class ShippingProtectionDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
-
-  @Type(() => Number)
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  amount?: number;
 }
 
 export class CheckoutPromotionDto {

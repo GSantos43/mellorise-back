@@ -5,7 +5,8 @@
   "scripts": {
     "build": "nest build",
     "start": "node dist/main.js",
-    "start:dev": "nest start --watch"
+    "start:dev": "nest start --watch",
+    "test:security": "npm run build && node dist/security/checkout-security.js"
   },
   "dependencies": {
     "@clerk/backend": "^3.17.0",

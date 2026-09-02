@@ -41,11 +41,17 @@ export class StripeService {
   private readonly stripe: Stripe;
 
   constructor(private readonly configService: ConfigService) {
-    const secretKey = this.configService.get<string>('STRIPE_SECRET_KEY');
+    const secretKey = this.configService.get<string>('STRIPE_SECRET_KEY')?.trim();
 
     if (!secretKey) {
       throw new InternalServerErrorException(
         'Missing required environment variable: STRIPE_SECRET_KEY',
+      );
+    }
+
+    if (!/^(sk|rk)_(test|live)_/.test(secretKey)) {
+      throw new InternalServerErrorException(
+        'Invalid STRIPE_SECRET_KEY format',
       );
     }
 
