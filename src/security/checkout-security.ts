@@ -110,17 +110,29 @@ async function main() {
     () =>
       validationPipe.transform(
         {
-          email: 'customer@example.com',
+          amount: 1,
+          customerEmail: 'customer@example.com',
           visitorId: 'visitor-123',
         },
         welcomeDiscountMetadata,
       ),
     (error: unknown) => {
       assert(error instanceof BadRequestException);
-      assert.match(JSON.stringify(error.getResponse()), /email should not exist/);
+      assert.match(JSON.stringify(error.getResponse()), /amount should not exist/);
       return true;
     },
   );
+
+  const validatedDiscountPayload = await validationPipe.transform(
+    {
+      customerEmail: 'customer@example.com',
+      visitorId: 'visitor-123',
+    },
+    welcomeDiscountMetadata,
+  );
+
+  assert(validatedDiscountPayload instanceof CreateWelcomeDiscountDto);
+  assert.equal(validatedDiscountPayload.customerEmail, 'customer@example.com');
 
   assert.throws(
     () =>

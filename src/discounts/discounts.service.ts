@@ -14,7 +14,12 @@ type WooCommerceCoupon = {
   discount_type: string;
   date_expires?: string | null;
   usage_count?: number;
+  usage_limit?: number;
   email_restrictions?: string[];
+  meta_data?: Array<{
+    key?: string;
+    value?: unknown;
+  }>;
 };
 
 type WooCommerceOrder = {
@@ -60,10 +65,31 @@ export class DiscountsService {
 
   async createWelcomeDiscount(
     input: CreateWelcomeDiscountDto,
-    authenticatedEmail: string,
+    authenticatedEmail?: string,
   ): Promise<WelcomeDiscountResponseDto> {
-    const email = this.normalizeEmail(authenticatedEmail);
+    const email = this.normalizeEmail(authenticatedEmail || input.customerEmail || '');
+
+    if (!email) {
+      throw this.createCouponError(
+        'coupon_missing_email',
+        'customerEmail is required to request this discount',
+      );
+    }
+
     await this.assertFirstPurchaseEmail(email);
+
+    const existingCoupon = await this.findActiveWelcomeCouponForEmail(email);
+
+    if (existingCoupon) {
+      return {
+        code: existingCoupon.code.toUpperCase(),
+        email,
+        amount: existingCoupon.amount,
+        discountType: existingCoupon.discount_type,
+        expiresAt: existingCoupon.date_expires || '',
+        emailSent: false,
+      };
+    }
 
     const expiresAt = this.getExpirationDate();
     const coupon = await this.wooCommerceClient.post<
@@ -106,6 +132,70 @@ export class DiscountsService {
     welcomeDiscount.emailSent = await this.sendWelcomeDiscountEmail(welcomeDiscount);
 
     return welcomeDiscount;
+  }
+
+  private async findActiveWelcomeCouponForEmail(
+    email: string,
+  ): Promise<WooCommerceCoupon | null> {
+    const normalizedEmail = this.normalizeEmail(email);
+
+    for (let page = 1; page <= 5; page += 1) {
+      const coupons = await this.wooCommerceClient.get<WooCommerceCoupon[]>(
+        '/coupons',
+        {
+          params: {
+            per_page: 100,
+            page,
+            orderby: 'date',
+            order: 'desc',
+          },
+        },
+      );
+
+      if (!coupons.length) return null;
+
+      const coupon = coupons.find((item) =>
+        this.isReusableWelcomeCouponForEmail(item, normalizedEmail),
+      );
+
+      if (coupon) return coupon;
+    }
+
+    return null;
+  }
+
+  private isReusableWelcomeCouponForEmail(
+    coupon: WooCommerceCoupon,
+    email: string,
+  ): boolean {
+    const isWelcomeCoupon = (coupon.meta_data || []).some(
+      (meta) => meta.key === '_headless_welcome_coupon' && String(meta.value) === 'true',
+    );
+    const couponEmail = (coupon.meta_data || []).find(
+      (meta) => meta.key === '_headless_welcome_email',
+    )?.value;
+    const allowedEmails = (coupon.email_restrictions || []).map((item) =>
+      this.normalizeEmail(item),
+    );
+    const isEmailMatch =
+      this.normalizeEmail(String(couponEmail || '')) === email ||
+      allowedEmails.includes(email);
+    const expiresAt = coupon.date_expires
+      ? new Date(coupon.date_expires).getTime()
+      : null;
+    const isExpired = Boolean(expiresAt && expiresAt <= Date.now());
+    const usageLimit = Number(coupon.usage_limit || 0);
+    const usageCount = Number(coupon.usage_count || 0);
+    const isUsed = Boolean(usageLimit && usageCount >= usageLimit);
+
+    return (
+      isWelcomeCoupon &&
+      isEmailMatch &&
+      coupon.discount_type === 'percent' &&
+      Number(coupon.amount) === Number(this.welcomeDiscountPercent) &&
+      !isExpired &&
+      !isUsed
+    );
   }
 
   async validateWelcomeCoupon(code: string, email?: string): Promise<WooCommerceCoupon> {

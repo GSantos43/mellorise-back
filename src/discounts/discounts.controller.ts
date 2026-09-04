@@ -17,10 +17,12 @@ export class DiscountsController {
     @Body() createWelcomeDiscountDto: CreateWelcomeDiscountDto,
     @Headers('authorization') authorization?: string,
   ): Promise<WelcomeDiscountResponseDto> {
-    const customer = await this.clerkAuthService.authenticate(authorization);
+    const customer = authorization
+      ? await this.clerkAuthService.authenticate(authorization)
+      : null;
     return this.discountsService.createWelcomeDiscount(
       createWelcomeDiscountDto,
-      customer.email,
+      customer?.email,
     );
   }
 
