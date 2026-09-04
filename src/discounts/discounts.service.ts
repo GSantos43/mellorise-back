@@ -87,6 +87,7 @@ export class DiscountsService {
         amount: existingCoupon.amount,
         discountType: existingCoupon.discount_type,
         expiresAt: existingCoupon.date_expires || '',
+        alreadyIssued: true,
       };
 
       welcomeDiscount.emailSent = await this.sendWelcomeDiscountEmail(welcomeDiscount);
@@ -130,6 +131,7 @@ export class DiscountsService {
       amount: coupon.amount,
       discountType: coupon.discount_type,
       expiresAt,
+      alreadyIssued: false,
     };
 
     welcomeDiscount.emailSent = await this.sendWelcomeDiscountEmail(welcomeDiscount);

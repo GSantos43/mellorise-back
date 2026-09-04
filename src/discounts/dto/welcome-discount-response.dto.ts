@@ -5,4 +5,5 @@ export class WelcomeDiscountResponseDto {
   discountType: string;
   expiresAt: string;
   emailSent?: boolean;
+  alreadyIssued?: boolean;
 }

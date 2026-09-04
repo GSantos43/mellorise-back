@@ -5,6 +5,7 @@ import { WooCommerceClient } from '../woocommerce/woocommerce.client';
 import { StripeService } from '../payments/stripe.service';
 import { DiscountsService } from '../discounts/discounts.service';
 import { WiioDispatchStatus, WiioService } from '../fulfillment/wiio.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 import {
   CheckoutAddressDto,
   CheckoutCartItemDto,
@@ -217,6 +218,7 @@ export class CheckoutService {
     private readonly configService: ConfigService,
     private readonly discountsService: DiscountsService,
     private readonly wiioService: WiioService,
+    private readonly analyticsService: AnalyticsService,
   ) {}
 
   async createCheckoutSession(
@@ -297,6 +299,22 @@ export class CheckoutService {
         },
       });
 
+      await this.analyticsService.recordSystemEvent('checkout_session_created', {
+        provider: 'stripe',
+        sessionId: session.id,
+        customerEmail:
+          createCheckoutDto.customerEmail || createCheckoutDto.customer?.email || '',
+        currency,
+        total: this.toCurrencyUnitAmount(
+          this.sumLineItemAmounts(lineItems) +
+            (shipping.isFree ? 0 : shipping.amount),
+          currency,
+        ),
+        couponCode: coupon?.code ?? '',
+        promotionCode: promotion?.code ?? '',
+        cart: createCheckoutDto.cart,
+      });
+
       return {
         orderId: null,
         status: 'pending_payment',
@@ -319,6 +337,15 @@ export class CheckoutService {
   async handleStripeWebhook(event: Stripe.Event): Promise<{ received: true }> {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object as Stripe.Checkout.Session;
+      await this.analyticsService.recordSystemEvent('stripe_checkout_completed', {
+        provider: 'stripe',
+        sessionId: session.id,
+        customerEmail: session.customer_details?.email || session.customer_email || '',
+        currency: session.currency || '',
+        amountTotal: session.amount_total ?? 0,
+        couponCode: session.metadata?.couponCode || '',
+        promotionCode: session.metadata?.promotionCode || '',
+      });
       const existingOrderId = this.getOrderIdFromSession(session);
 
       if (existingOrderId) {
@@ -330,6 +357,15 @@ export class CheckoutService {
 
     if (event.type === 'checkout.session.expired') {
       const session = event.data.object as Stripe.Checkout.Session;
+      await this.analyticsService.recordSystemEvent('stripe_checkout_expired', {
+        provider: 'stripe',
+        sessionId: session.id,
+        customerEmail: session.customer_details?.email || session.customer_email || '',
+        currency: session.currency || '',
+        amountTotal: session.amount_total ?? 0,
+        couponCode: session.metadata?.couponCode || '',
+        promotionCode: session.metadata?.promotionCode || '',
+      });
       const orderId = this.getOrderIdFromSession(session);
 
       if (orderId) {
@@ -524,6 +560,18 @@ export class CheckoutService {
       },
     );
     const paymentUrl = this.getWooCommercePaymentUrl(order);
+
+    await this.analyticsService.recordSystemEvent('checkout_session_created', {
+      provider: 'woopayments',
+      orderId: order.id,
+      status: order.status,
+      customerEmail:
+        createCheckoutDto.customerEmail || createCheckoutDto.customer?.email || '',
+      currency: order.currency || currency,
+      total: order.total || '0.00',
+      promotionCode: promotion?.code ?? '',
+      cart: createCheckoutDto.cart,
+    });
 
     return {
       orderId: order.id,
