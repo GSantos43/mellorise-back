@@ -69,7 +69,7 @@ export class GeoService {
     if (eligibility.allowed) return;
 
     throw new ForbiddenException({
-      message: 'MelloRise checkout is currently available only in the United States.',
+      message: 'MelloRise checkout is currently available only in supported countries.',
       source: 'geo',
       countryCode: eligibility.countryCode,
       allowedCountries: eligibility.allowedCountries,
