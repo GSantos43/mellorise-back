@@ -336,7 +336,7 @@ export class TrackingService {
   private toStatusLabel(status?: string): string {
     const labels: Record<string, string> = {
       pending: 'Payment pending',
-      processing: 'Preparing order',
+      processing: 'Awaiting shipment',
       'on-hold': 'Waiting for confirmation',
       completed: 'Delivered',
       cancelled: 'Cancelled',

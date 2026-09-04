@@ -6,4 +6,5 @@ export class CheckoutResponseDto {
   checkoutUrl: string;
   sessionId: string;
   paymentUrl: string | null;
+  provider?: 'stripe' | 'woopayments';
 }

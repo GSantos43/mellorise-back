@@ -36,6 +36,13 @@ type WooCommerceAccountOrder = {
 
 @Injectable()
 export class AccountService {
+  private readonly visibleOrderStatuses = new Set([
+    'processing',
+    'completed',
+    'on-hold',
+    'refunded',
+  ]);
+
   constructor(private readonly wooCommerceClient: WooCommerceClient) {}
 
   async listOrdersForCustomer(customer: AuthenticatedClerkCustomer) {
@@ -48,8 +55,10 @@ export class AccountService {
       },
     });
 
-    const visibleOrders = orders.filter((order) =>
-      order.billing?.email?.trim().toLowerCase() === customer.email,
+    const visibleOrders = orders.filter(
+      (order) =>
+        order.billing?.email?.trim().toLowerCase() === customer.email &&
+        this.isVisiblePurchaseStatus(order.status),
     );
 
     return {
@@ -69,7 +78,10 @@ export class AccountService {
       `/orders/${encodeURIComponent(orderId)}`,
     );
 
-    if (order.billing?.email?.trim().toLowerCase() !== customer.email) {
+    if (
+      order.billing?.email?.trim().toLowerCase() !== customer.email ||
+      !this.isVisiblePurchaseStatus(order.status)
+    ) {
       throw new NotFoundException('Order not found');
     }
 
@@ -175,7 +187,7 @@ export class AccountService {
   private toStatusLabel(status?: string): string {
     const labels: Record<string, string> = {
       pending: 'Payment pending',
-      processing: 'Preparing order',
+      processing: 'Awaiting shipment',
       'on-hold': 'Waiting for confirmation',
       completed: 'Delivered',
       cancelled: 'Cancelled',
@@ -184,6 +196,10 @@ export class AccountService {
     };
 
     return labels[status ?? ''] ?? 'Order received';
+  }
+
+  private isVisiblePurchaseStatus(status?: string): boolean {
+    return this.visibleOrderStatuses.has(status ?? '');
   }
 
   private maskEmail(email: string): string {

@@ -23,6 +23,13 @@ type WooCommerceOrder = {
   billing?: {
     email?: string;
   };
+  coupon_lines?: Array<{
+    code?: string;
+  }>;
+  meta_data?: Array<{
+    key?: string;
+    value?: unknown;
+  }>;
 };
 
 type WooCommerceCouponPayload = {
@@ -106,14 +113,20 @@ export class DiscountsService {
     const normalizedEmail = email ? this.normalizeEmail(email) : '';
 
     if (!normalizedCode) {
-      throw new BadRequestException('couponCode is required');
+      throw this.createCouponError(
+        'coupon_missing_code',
+        'couponCode is required',
+      );
     }
 
     if (!normalizedEmail) {
-      throw new BadRequestException('customerEmail is required to use this coupon');
+      throw this.createCouponError(
+        'coupon_missing_email',
+        'customerEmail is required to use this coupon',
+      );
     }
 
-    await this.assertFirstPurchaseEmail(normalizedEmail);
+    await this.assertFirstPurchaseEmail(normalizedEmail, normalizedCode);
 
     const coupons = await this.wooCommerceClient.get<WooCommerceCoupon[]>(
       '/coupons',
@@ -127,18 +140,17 @@ export class DiscountsService {
     const coupon = coupons[0];
 
     if (!coupon || coupon.code.toLowerCase() !== normalizedCode) {
-      throw new BadRequestException('Coupon not found');
+      throw this.createCouponError('coupon_not_found', 'Coupon not found');
     }
 
     if (
       coupon.discount_type !== 'percent' ||
       Number(coupon.amount) !== Number(this.welcomeDiscountPercent)
     ) {
-      throw new BadRequestException('Coupon is not a welcome discount');
-    }
-
-    if (Number(coupon.usage_count || 0) > 0) {
-      throw new BadRequestException('Coupon has already been used');
+      throw this.createCouponError(
+        'coupon_invalid',
+        'Coupon is not a welcome discount',
+      );
     }
 
     const allowedEmails = (coupon.email_restrictions || []).map((item) =>
@@ -146,11 +158,14 @@ export class DiscountsService {
     );
 
     if (allowedEmails.length && !allowedEmails.includes(normalizedEmail)) {
-      throw new BadRequestException('Coupon email does not match checkout email');
+      throw this.createCouponError(
+        'coupon_email_mismatch',
+        'Coupon email does not match checkout email',
+      );
     }
 
     if (coupon.date_expires && new Date(coupon.date_expires).getTime() <= Date.now()) {
-      throw new BadRequestException('Coupon has expired');
+      throw this.createCouponError('coupon_expired', 'Coupon has expired');
     }
 
     return coupon;
@@ -175,7 +190,10 @@ export class DiscountsService {
     return this.configService.get<string>('WELCOME_DISCOUNT_PERCENT') || '10';
   }
 
-  private async assertFirstPurchaseEmail(email: string): Promise<void> {
+  private async assertFirstPurchaseEmail(
+    email: string,
+    couponCode = '',
+  ): Promise<void> {
     const orders = await this.wooCommerceClient.get<WooCommerceOrder[]>('/orders', {
       params: {
         search: email,
@@ -183,17 +201,52 @@ export class DiscountsService {
         per_page: 10,
       },
     });
-    const hasPreviousOrder = orders.some(
+    const paidOrders = orders.filter(
       (order) =>
         this.firstPurchaseStatuses.includes(order.status) &&
         this.normalizeEmail(order.billing?.email || '') === email,
     );
+    const normalizedCouponCode = couponCode.trim().toLowerCase();
+    const hasPaidOrderWithCoupon =
+      Boolean(normalizedCouponCode) &&
+      paidOrders.some((order) =>
+        this.orderHasCoupon(order, normalizedCouponCode),
+      );
 
-    if (hasPreviousOrder) {
-      throw new BadRequestException(
+    if (hasPaidOrderWithCoupon) {
+      throw this.createCouponError(
+        'coupon_exhausted',
+        'Coupon has already been used on a completed Stripe checkout',
+      );
+    }
+
+    if (paidOrders.length) {
+      throw this.createCouponError(
+        'coupon_first_purchase_only',
         'This welcome discount is available only for first purchases',
       );
     }
+  }
+
+  private createCouponError(code: string, message: string): BadRequestException {
+    return new BadRequestException({
+      code,
+      message,
+      userMessage: message,
+    });
+  }
+
+  private orderHasCoupon(order: WooCommerceOrder, couponCode: string): boolean {
+    const couponLineMatch = (order.coupon_lines || []).some(
+      (coupon) => coupon.code?.trim().toLowerCase() === couponCode,
+    );
+    if (couponLineMatch) return true;
+
+    return (order.meta_data || []).some(
+      (meta) =>
+        meta.key === '_headless_coupon_code' &&
+        String(meta.value || '').trim().toLowerCase() === couponCode,
+    );
   }
 
   private get firstPurchaseStatuses(): string[] {

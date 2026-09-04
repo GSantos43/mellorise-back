@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 import { WooCommerceClient } from '../woocommerce/woocommerce.client';
@@ -15,6 +15,7 @@ import { CheckoutResponseDto } from './dto/checkout-response.dto';
 type WooCommerceOrder = {
   id: number;
   number?: string;
+  order_key?: string;
   status: string;
   total: string;
   currency: string;
@@ -69,6 +70,12 @@ type WooCommerceVariation = {
   image?: {
     src?: string;
   };
+};
+
+type WooCommercePaymentGateway = {
+  id: string;
+  title?: string;
+  enabled?: boolean;
 };
 
 type WooCommerceOrderPayload = {
@@ -180,6 +187,8 @@ type ShippingProtectionDecision = {
   currency: string;
 };
 
+type CheckoutProvider = 'stripe' | 'woopayments';
+
 type CheckoutBundlePromotion = {
   code: string;
   label: string;
@@ -250,6 +259,16 @@ export class CheckoutService {
       });
     }
 
+    if (this.getCheckoutProvider() === 'woopayments') {
+      return this.createWooPaymentsCheckout(
+        createCheckoutDto,
+        promotion,
+        shipping,
+        shippingProtection,
+        currency,
+      );
+    }
+
     try {
       const session = await this.stripeService.createCheckoutSession({
         lineItems,
@@ -266,6 +285,7 @@ export class CheckoutService {
           shippingProtection: String(shippingProtection.enabled),
           shippingProtectionAmount: String(shippingProtection.amount),
           couponCode: coupon?.code ?? '',
+          couponPercent: coupon?.amount ?? '',
           promotionCode: promotion?.code ?? '',
           promotionFreeQuantity: String(promotion?.freeQuantity ?? 0),
           promotionDeliveredQuantity: String(
@@ -289,6 +309,7 @@ export class CheckoutService {
         checkoutUrl: session.url ?? '',
         sessionId: session.id,
         paymentUrl: null,
+        provider: 'stripe',
       };
     } catch (error) {
       throw error;
@@ -323,6 +344,9 @@ export class CheckoutService {
     createCheckoutDto: CreateCheckoutDto,
     promotion?: CheckoutBundlePromotion,
     payment?: {
+      provider?: CheckoutProvider;
+      paymentMethod?: string;
+      paymentMethodTitle?: string;
       status?: string;
       setPaid?: boolean;
       transactionId?: string;
@@ -330,22 +354,39 @@ export class CheckoutService {
       shipping?: CheckoutShippingDecision;
       shippingProtection?: ShippingProtectionDecision;
       stripeAddressUpdate?: Partial<WooCommerceOrderPayload>;
+      resolvedCart?: ResolvedCheckoutCartItem[];
+      discountPercent?: number;
+      successUrl?: string;
+      cancelUrl?: string;
     },
   ): Promise<WooCommerceOrder> {
     const setPaid = payment?.setPaid ?? false;
+    const provider = payment?.provider ?? 'stripe';
 
     return this.wooCommerceClient.post<WooCommerceOrder, WooCommerceOrderPayload>(
       '/orders',
       {
-        payment_method: 'stripe',
-        payment_method_title: 'Stripe',
+        payment_method: payment?.paymentMethod ?? provider,
+        payment_method_title:
+          payment?.paymentMethodTitle ?? this.getPaymentMethodTitle(provider),
         set_paid: setPaid,
         status: payment?.status,
         transaction_id: payment?.transactionId,
         customer_note: createCheckoutDto.customerNote,
-        line_items: createCheckoutDto.cart.flatMap((item, index) =>
-          this.toWooCommerceLineItems(item, index === 0 ? promotion : undefined),
-        ),
+        line_items: createCheckoutDto.cart.flatMap((item, index) => {
+          const resolvedItem = payment?.resolvedCart?.find(
+            (cartItem) =>
+              cartItem.productId === item.productId &&
+              cartItem.variationId === item.variationId,
+          );
+
+          return this.toWooCommerceLineItems(
+            item,
+            index === 0 ? promotion : undefined,
+            resolvedItem,
+            payment?.discountPercent,
+          );
+        }),
         fee_lines: payment?.shippingProtection?.enabled
           ? [
               {
@@ -381,6 +422,10 @@ export class CheckoutService {
             key: '_headless_shipping_pending',
             value: 'true',
           },
+          {
+            key: '_headless_payment_provider',
+            value: provider,
+          },
           ...(createCheckoutDto.couponCode
             ? [
                 {
@@ -398,6 +443,22 @@ export class CheckoutService {
                 },
               ]
             : []),
+          ...(payment?.successUrl
+            ? [
+                {
+                  key: '_headless_success_url',
+                  value: payment.successUrl,
+                },
+              ]
+            : []),
+          ...(payment?.cancelUrl
+            ? [
+                {
+                  key: '_headless_cancel_url',
+                  value: payment.cancelUrl,
+                },
+              ]
+            : []),
           ...(setPaid
             ? [
                 {
@@ -406,7 +467,9 @@ export class CheckoutService {
                 },
                 {
                   key: '_wiio_sync_source',
-                  value: 'stripe_checkout_webhook',
+                  value: provider === 'woopayments'
+                    ? 'woopayments_order_paid'
+                    : 'stripe_checkout_webhook',
                 },
               ]
             : []),
@@ -425,7 +488,7 @@ export class CheckoutService {
         shipping:
           payment?.stripeAddressUpdate?.shipping ||
           this.toWooCommerceShippingAddress(createCheckoutDto.shippingAddress),
-        coupon_lines: createCheckoutDto.couponCode
+        coupon_lines: createCheckoutDto.couponCode && provider !== 'stripe'
           ? [
               {
                 code: createCheckoutDto.couponCode.trim().toUpperCase(),
@@ -434,6 +497,60 @@ export class CheckoutService {
           : undefined,
       },
     );
+  }
+
+  private async createWooPaymentsCheckout(
+    createCheckoutDto: CreateCheckoutDto,
+    promotion: CheckoutBundlePromotion | undefined,
+    shipping: CheckoutShippingDecision,
+    shippingProtection: ShippingProtectionDecision,
+    currency: string,
+  ): Promise<CheckoutResponseDto> {
+    await this.assertWooPaymentsGatewayReady();
+
+    const order = await this.createWooCommerceOrder(
+      createCheckoutDto,
+      promotion,
+      {
+        provider: 'woopayments',
+        paymentMethod: this.getWooPaymentsGatewayId(),
+        paymentMethodTitle: this.getWooPaymentsGatewayTitle(),
+        status: 'pending',
+        setPaid: false,
+        shipping,
+        shippingProtection,
+        successUrl: this.toWooPaymentsReturnUrl(createCheckoutDto.successUrl),
+        cancelUrl: createCheckoutDto.cancelUrl,
+      },
+    );
+    const paymentUrl = this.getWooCommercePaymentUrl(order);
+
+    return {
+      orderId: order.id,
+      status: order.status ?? 'pending_payment',
+      total: order.total || '0.00',
+      currency: order.currency || currency,
+      checkoutUrl: paymentUrl,
+      sessionId: '',
+      paymentUrl,
+      provider: 'woopayments',
+    };
+  }
+
+  private async assertWooPaymentsGatewayReady(): Promise<void> {
+    const gatewayId = this.getWooPaymentsGatewayId();
+    const gateway = await this.wooCommerceClient.get<WooCommercePaymentGateway>(
+      `/payment_gateways/${encodeURIComponent(gatewayId)}`,
+    );
+
+    if (gateway.enabled !== true) {
+      this.logger.warn(
+        `WooPayments gateway ${gatewayId} is not enabled in WooCommerce`,
+      );
+      throw new BadGatewayException(
+        'WooPayments is not enabled in WooCommerce yet.',
+      );
+    }
   }
 
   private async buildStripeLineItems(
@@ -530,6 +647,8 @@ export class CheckoutService {
         shipping,
         shippingProtection,
         stripeAddressUpdate,
+        resolvedCart,
+        discountPercent: this.getSessionCouponPercent(session),
       },
     );
 
@@ -747,11 +866,24 @@ export class CheckoutService {
   private toWooCommerceLineItems(
     item: CheckoutCartItemDto,
     promotion?: CheckoutBundlePromotion,
+    resolvedItem?: ResolvedCheckoutCartItem,
+    discountPercent = 0,
   ): WooCommerceOrderPayload['line_items'] {
+    const lineTotals = this.getWooCommerceLineTotals(
+      resolvedItem,
+      item.quantity,
+      discountPercent,
+    );
     const paidLineItem: WooCommerceOrderPayload['line_items'][number] = {
       product_id: item.productId,
       variation_id: item.variationId,
       quantity: item.quantity,
+      ...(lineTotals
+        ? {
+            subtotal: lineTotals.subtotal,
+            total: lineTotals.total,
+          }
+        : {}),
       meta_data: [
         {
           key: '_headless_line_type',
@@ -947,11 +1079,100 @@ export class CheckoutService {
   }
 
   private getCheckoutCurrency(): string {
+    return 'USD';
+  }
+
+  private getSessionCouponPercent(session: Stripe.Checkout.Session): number {
+    const percent = Number(session.metadata?.couponPercent || 0);
+
+    return Number.isFinite(percent) && percent > 0 ? percent : 0;
+  }
+
+  private getCheckoutProvider(): CheckoutProvider {
+    const provider = this.configService
+      .get<string>('CHECKOUT_PROVIDER')
+      ?.trim()
+      .toLowerCase();
+
+    return provider === 'woopayments' ? 'woopayments' : 'stripe';
+  }
+
+  private getPaymentMethodTitle(provider: CheckoutProvider): string {
+    return provider === 'woopayments'
+      ? this.getWooPaymentsGatewayTitle()
+      : 'Stripe';
+  }
+
+  private getWooPaymentsGatewayId(): string {
     return (
-      this.configService.get<string>('CHECKOUT_CURRENCY') ||
-      this.configService.get<string>('WOOCOMMERCE_CURRENCY') ||
-      'USD'
-    ).toUpperCase();
+      this.configService.get<string>('WOOPAYMENTS_GATEWAY_ID') ||
+      'woocommerce_payments'
+    ).trim();
+  }
+
+  private getWooPaymentsGatewayTitle(): string {
+    return (
+      this.configService.get<string>('WOOPAYMENTS_GATEWAY_TITLE') ||
+      'WooPayments'
+    ).trim();
+  }
+
+  private getWooCommercePaymentUrl(order: WooCommerceOrder): string {
+    if (order.payment_url?.trim()) {
+      return this.toPublicWooCommerceUrl(order.payment_url);
+    }
+
+    const orderKey = order.order_key?.trim();
+    const publicBaseUrl = this.getPublicWooCommerceUrl();
+    if (order.id && orderKey && publicBaseUrl) {
+      const url = new URL(`/checkout/order-pay/${order.id}/`, publicBaseUrl);
+      url.searchParams.set('pay_for_order', 'true');
+      url.searchParams.set('key', orderKey);
+      return url.toString();
+    }
+
+    this.logger.error(
+      `WooCommerce order ${order.id} did not return a payment_url or order_key`,
+    );
+    throw new BadGatewayException(
+      'WooCommerce did not return a payment URL for this order.',
+    );
+  }
+
+  private toWooPaymentsReturnUrl(successUrl: string): string {
+    try {
+      const url = new URL(successUrl);
+      if (url.searchParams.get('session_id') === '{CHECKOUT_SESSION_ID}') {
+        url.searchParams.delete('session_id');
+      }
+      return url.toString();
+    } catch {
+      return successUrl;
+    }
+  }
+
+  private toPublicWooCommerceUrl(rawUrl: string): string {
+    const publicBaseUrl = this.getPublicWooCommerceUrl();
+    if (!publicBaseUrl) return rawUrl;
+
+    try {
+      const paymentUrl = new URL(rawUrl);
+      const publicUrl = new URL(publicBaseUrl);
+      paymentUrl.protocol = publicUrl.protocol;
+      paymentUrl.host = publicUrl.host;
+      return paymentUrl.toString();
+    } catch {
+      return rawUrl;
+    }
+  }
+
+  private getPublicWooCommerceUrl(): string {
+    return (
+      this.configService.get<string>('WOOCOMMERCE_PUBLIC_URL') ||
+      this.configService.get<string>('WOOCOMMERCE_SIGNATURE_BASE_URL') ||
+      this.configService.get<string>('WOOCOMMERCE_URL') ||
+      ''
+    ).trim();
   }
 
   private toWooCommerceBillingAddress(createCheckoutDto: CreateCheckoutDto) {
@@ -1102,6 +1323,26 @@ export class CheckoutService {
       (total, item) => total + item.unitAmount * item.quantity,
       0,
     );
+  }
+
+  private getWooCommerceLineTotals(
+    item: ResolvedCheckoutCartItem | undefined,
+    quantity: number,
+    discountPercent: number,
+  ): { subtotal: string; total: string } | null {
+    if (!item || !Number.isFinite(discountPercent) || discountPercent <= 0) {
+      return null;
+    }
+
+    const subtotal = Number(item.price) * quantity;
+    if (!Number.isFinite(subtotal) || subtotal <= 0) return null;
+
+    const total = subtotal * Math.max(0, 1 - discountPercent / 100);
+
+    return {
+      subtotal: subtotal.toFixed(2),
+      total: total.toFixed(2),
+    };
   }
 
   private toMinorUnitAmount(total: string, currency: string): number {

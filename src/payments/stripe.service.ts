@@ -86,7 +86,7 @@ export class StripeService {
         line_items: input.lineItems.map((item) => ({
           quantity: item.quantity,
           price_data: {
-            currency: item.currency.toLowerCase(),
+            currency: 'usd',
             unit_amount: item.unitAmount,
             product_data: {
               name: item.name,
@@ -131,7 +131,7 @@ export class StripeService {
         display_name: shipping.displayName,
         fixed_amount: {
           amount: shipping.isFree ? 0 : shipping.amount,
-          currency: shipping.currency.toLowerCase(),
+          currency: 'usd',
         },
         delivery_estimate:
           shipping.minDeliveryDays || shipping.maxDeliveryDays
