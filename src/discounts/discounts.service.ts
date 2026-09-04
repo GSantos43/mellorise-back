@@ -81,18 +81,10 @@ export class DiscountsService {
     const existingCoupon = await this.findActiveWelcomeCouponForEmail(email);
 
     if (existingCoupon) {
-      const welcomeDiscount: WelcomeDiscountResponseDto = {
-        code: existingCoupon.code.toUpperCase(),
-        email,
-        amount: existingCoupon.amount,
-        discountType: existingCoupon.discount_type,
-        expiresAt: existingCoupon.date_expires || '',
-        alreadyIssued: true,
-      };
-
-      welcomeDiscount.emailSent = await this.sendWelcomeDiscountEmail(welcomeDiscount);
-
-      return welcomeDiscount;
+      throw this.createCouponError(
+        'coupon_already_issued',
+        'A first-purchase coupon has already been sent to this email',
+      );
     }
 
     const expiresAt = this.getExpirationDate();
