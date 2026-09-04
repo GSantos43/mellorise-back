@@ -81,14 +81,17 @@ export class DiscountsService {
     const existingCoupon = await this.findActiveWelcomeCouponForEmail(email);
 
     if (existingCoupon) {
-      return {
+      const welcomeDiscount: WelcomeDiscountResponseDto = {
         code: existingCoupon.code.toUpperCase(),
         email,
         amount: existingCoupon.amount,
         discountType: existingCoupon.discount_type,
         expiresAt: existingCoupon.date_expires || '',
-        emailSent: false,
       };
+
+      welcomeDiscount.emailSent = await this.sendWelcomeDiscountEmail(welcomeDiscount);
+
+      return welcomeDiscount;
     }
 
     const expiresAt = this.getExpirationDate();
