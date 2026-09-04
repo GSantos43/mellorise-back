@@ -66,6 +66,9 @@ export class StripeService {
     try {
       return await this.stripe.checkout.sessions.create({
         mode: 'payment',
+        adaptive_pricing: {
+          enabled: false,
+        },
         payment_method_types: ['card'],
         success_url: input.successUrl,
         cancel_url: input.cancelUrl,
