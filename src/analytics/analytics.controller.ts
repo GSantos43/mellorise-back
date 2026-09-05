@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Ip, Post, Req, UnauthorizedException } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Ip, Post, Query, Req, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AnalyticsService } from './analytics.service';
 import { CreateAnalyticsEventDto } from './dto/create-analytics-event.dto';
@@ -31,10 +31,12 @@ export class AnalyticsController {
   @Get('summary')
   async getSummary(
     @Headers('authorization') authorization = '',
+    @Query('from') from = '',
+    @Query('to') to = '',
   ): Promise<Awaited<ReturnType<AnalyticsService['getSummary']>>> {
     this.assertDashboardAccess(authorization);
 
-    return this.analyticsService.getSummary();
+    return this.analyticsService.getSummary({ from, to });
   }
 
   private getHeader(request: AnalyticsRequest, key: string): string {

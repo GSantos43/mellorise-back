@@ -23,6 +23,11 @@ type AnalyticsMetric = {
   value: number;
 };
 
+type AnalyticsDateFilter = {
+  from?: string;
+  to?: string;
+};
+
 type AnalyticsGeo = {
   city: string;
   region: string;
@@ -84,12 +89,18 @@ export class AnalyticsService {
     });
   }
 
-  async getSummary(): Promise<{
+  async getSummary(filters: AnalyticsDateFilter = {}): Promise<{
     generatedAt: string;
+    dateRange: {
+      from: string;
+      to: string;
+      isFiltered: boolean;
+    };
     storage: {
       enabled: boolean;
       filePath: string;
       eventCount: number;
+      totalEventCount: number;
     };
     totals: AnalyticsMetric[];
     funnel: Array<AnalyticsMetric & { rateFromPrevious: number | null }>;
@@ -101,7 +112,9 @@ export class AnalyticsService {
     topCities: AnalyticsMetric[];
     recentEvents: AnalyticsEvent[];
   }> {
-    const events = await this.backfillStoredEventGeo(await this.readStoredEvents());
+    const storedEvents = await this.backfillStoredEventGeo(await this.readStoredEvents());
+    const dateRange = this.resolveDateRange(filters);
+    const events = this.filterEventsByDate(storedEvents, dateRange);
     const countByName = this.countBy(events, (event) => event.name || 'unknown');
     const sessions = new Set(events.map((event) => event.sessionId).filter(Boolean));
     const clients = new Set(events.map((event) => event.clientId).filter(Boolean));
@@ -118,10 +131,12 @@ export class AnalyticsService {
 
     return {
       generatedAt: new Date().toISOString(),
+      dateRange,
       storage: {
         enabled: Boolean(this.analyticsEventsFile),
         filePath: this.analyticsEventsFile,
         eventCount: events.length,
+        totalEventCount: storedEvents.length,
       },
       totals: [
         { key: 'events', label: 'Events', value: events.length },
@@ -293,6 +308,46 @@ export class AnalyticsService {
 
   private get analyticsEventsFile(): string {
     return this.configService.get<string>('ANALYTICS_EVENTS_FILE') || '';
+  }
+
+  private resolveDateRange(filters: AnalyticsDateFilter): {
+    from: string;
+    to: string;
+    isFiltered: boolean;
+  } {
+    const from = this.parseDateFilter(filters.from);
+    const to = this.parseDateFilter(filters.to);
+
+    return {
+      from: from ? from.toISOString() : '',
+      to: to ? to.toISOString() : '',
+      isFiltered: Boolean(from || to),
+    };
+  }
+
+  private parseDateFilter(value?: string): Date | null {
+    if (!value) return null;
+
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  private filterEventsByDate(
+    events: AnalyticsEvent[],
+    range: { from: string; to: string },
+  ): AnalyticsEvent[] {
+    const fromTime = range.from ? Date.parse(range.from) : null;
+    const toTime = range.to ? Date.parse(range.to) : null;
+
+    if (!fromTime && !toTime) return events;
+
+    return events.filter((event) => {
+      const eventTime = Date.parse(event.timestamp);
+      if (Number.isNaN(eventTime)) return false;
+      if (fromTime && eventTime < fromTime) return false;
+      if (toTime && eventTime > toTime) return false;
+      return true;
+    });
   }
 
   private async resolveIpGeo(ipAddress: string): Promise<AnalyticsGeo | null> {
