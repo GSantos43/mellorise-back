@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { appendFile, readFile } from 'node:fs/promises';
+import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { CreateAnalyticsEventDto } from './dto/create-analytics-event.dto';
 
 type AnalyticsEvent = {
@@ -101,7 +101,7 @@ export class AnalyticsService {
     topCities: AnalyticsMetric[];
     recentEvents: AnalyticsEvent[];
   }> {
-    const events = await this.readStoredEvents();
+    const events = await this.backfillStoredEventGeo(await this.readStoredEvents());
     const countByName = this.countBy(events, (event) => event.name || 'unknown');
     const sessions = new Set(events.map((event) => event.sessionId).filter(Boolean));
     const clients = new Set(events.map((event) => event.clientId).filter(Boolean));
@@ -175,6 +175,48 @@ export class AnalyticsService {
       );
       return [];
     }
+  }
+
+  private async backfillStoredEventGeo(events: AnalyticsEvent[]): Promise<AnalyticsEvent[]> {
+    if (!this.analyticsEventsFile || !events.length) return events;
+    if (this.configService.get<string>('ANALYTICS_GEO_ENABLED') !== 'true') return events;
+
+    let didBackfill = false;
+    const enrichedEvents: AnalyticsEvent[] = [];
+
+    for (const event of events) {
+      if (event.geo || !event.ip) {
+        enrichedEvents.push(event);
+        continue;
+      }
+
+      const geo = await this.resolveIpGeo(event.ip);
+      if (!geo) {
+        enrichedEvents.push(event);
+        continue;
+      }
+
+      didBackfill = true;
+      enrichedEvents.push({
+        ...event,
+        geo,
+      });
+    }
+
+    if (!didBackfill) return enrichedEvents;
+
+    try {
+      const nextContent = enrichedEvents
+        .map((event) => JSON.stringify(event))
+        .join('\n');
+      await writeFile(this.analyticsEventsFile, `${nextContent}\n`, 'utf8');
+    } catch (error) {
+      this.logger.warn(
+        `Could not backfill analytics event geolocation: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    return enrichedEvents;
   }
 
   private parseStoredEvent(line: string): AnalyticsEvent | null {
