@@ -208,6 +208,11 @@ type ResolvedCheckoutCartItem = {
   variationTitle?: string;
 };
 
+type CheckoutAnalyticsContext = {
+  ip?: string;
+  userAgent?: string;
+};
+
 @Injectable()
 export class CheckoutService {
   private readonly logger = new Logger(CheckoutService.name);
@@ -223,6 +228,7 @@ export class CheckoutService {
 
   async createCheckoutSession(
     createCheckoutDto: CreateCheckoutDto,
+    analyticsContext: CheckoutAnalyticsContext = {},
   ): Promise<CheckoutResponseDto> {
     this.validateCart(createCheckoutDto.cart);
     const resolvedCart = await this.resolveCheckoutCart(createCheckoutDto.cart);
@@ -260,6 +266,32 @@ export class CheckoutService {
         quantity: 1,
       });
     }
+
+    const checkoutTotal = this.toCurrencyUnitAmount(
+      this.sumLineItemAmounts(lineItems) +
+        (shipping.isFree ? 0 : shipping.amount),
+      currency,
+    );
+
+    await this.analyticsService.recordEvent(
+      {
+        name: 'begin_checkout',
+        params: {
+          source: 'checkout_session_request',
+          provider: this.getCheckoutProvider(),
+          customerEmail:
+            createCheckoutDto.customerEmail ||
+            createCheckoutDto.customer?.email ||
+            '',
+          currency,
+          total: checkoutTotal,
+          couponCode: coupon?.code ?? '',
+          promotionCode: promotion?.code ?? '',
+          cart: createCheckoutDto.cart,
+        },
+      },
+      analyticsContext,
+    );
 
     if (this.getCheckoutProvider() === 'woopayments') {
       return this.createWooPaymentsCheckout(
@@ -305,11 +337,7 @@ export class CheckoutService {
         customerEmail:
           createCheckoutDto.customerEmail || createCheckoutDto.customer?.email || '',
         currency,
-        total: this.toCurrencyUnitAmount(
-          this.sumLineItemAmounts(lineItems) +
-            (shipping.isFree ? 0 : shipping.amount),
-          currency,
-        ),
+        total: checkoutTotal,
         couponCode: coupon?.code ?? '',
         promotionCode: promotion?.code ?? '',
         cart: createCheckoutDto.cart,
@@ -318,11 +346,7 @@ export class CheckoutService {
       return {
         orderId: null,
         status: 'pending_payment',
-        total: this.toCurrencyUnitAmount(
-          this.sumLineItemAmounts(lineItems) +
-            (shipping.isFree ? 0 : shipping.amount),
-          currency,
-        ),
+        total: checkoutTotal,
         currency,
         checkoutUrl: session.url ?? '',
         sessionId: session.id,

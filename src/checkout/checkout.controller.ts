@@ -9,6 +9,11 @@ type CheckoutRequest = Parameters<GeoService['assertCheckoutAllowed']>[0] & {
   rawBody?: Buffer;
 };
 
+type CheckoutRequestContext = {
+  ip?: string;
+  userAgent?: string;
+};
+
 @Controller('checkout')
 export class CheckoutController {
   constructor(
@@ -23,7 +28,10 @@ export class CheckoutController {
     @Req() request: CheckoutRequest,
   ): Promise<CheckoutResponseDto> {
     await this.geoService.assertCheckoutAllowed(request);
-    return this.checkoutService.createCheckoutSession(createCheckoutDto);
+    return this.checkoutService.createCheckoutSession(
+      createCheckoutDto,
+      this.getRequestContext(request),
+    );
   }
 
   @Post('session')
@@ -32,7 +40,10 @@ export class CheckoutController {
     @Req() request: CheckoutRequest,
   ): Promise<CheckoutResponseDto> {
     await this.geoService.assertCheckoutAllowed(request);
-    return this.checkoutService.createCheckoutSession(createCheckoutDto);
+    return this.checkoutService.createCheckoutSession(
+      createCheckoutDto,
+      this.getRequestContext(request),
+    );
   }
 
   @Post('webhook')
@@ -50,5 +61,31 @@ export class CheckoutController {
     );
 
     return this.checkoutService.handleStripeWebhook(event);
+  }
+
+  private getRequestContext(request: CheckoutRequest): CheckoutRequestContext {
+    return {
+      ip: this.getClientIp(request),
+      userAgent: this.getHeader(request, 'user-agent'),
+    };
+  }
+
+  private getHeader(request: CheckoutRequest, key: string): string {
+    const value = request.headers?.[key];
+    return Array.isArray(value) ? value[0] ?? '' : value ?? '';
+  }
+
+  private getClientIp(request: CheckoutRequest): string {
+    const forwardedFor = this.getHeader(request, 'x-forwarded-for');
+    const forwardedIp = forwardedFor.split(',')[0]?.trim();
+    const candidates = [
+      this.getHeader(request, 'cf-connecting-ip'),
+      this.getHeader(request, 'x-real-ip'),
+      forwardedIp,
+    ];
+
+    return candidates
+      .map((candidate) => candidate.trim().replace(/^::ffff:/, ''))
+      .find(Boolean) || '';
   }
 }
