@@ -1033,9 +1033,11 @@ export class CheckoutService {
     if (cart.length !== 1) return undefined;
 
     const variationTitle = this.normalizeBundleTitle(resolvedCart[0]?.variationTitle);
-    const paidQuantity = variationTitle.includes('buy 3 get 2')
+    const paidQuantity = variationTitle.includes('buy 3 get 5') ||
+      variationTitle.includes('buy 3 get 2')
       ? 3
-      : variationTitle.includes('buy 2 get 1')
+      : variationTitle.includes('buy 2 get 3') ||
+        variationTitle.includes('buy 2 get 1')
         ? 2
         : cart[0].quantity;
     const freeQuantity = paidQuantity >= 3 ? 2 : paidQuantity === 2 ? 1 : 0;
@@ -1043,7 +1045,7 @@ export class CheckoutService {
 
     return {
       code: paidQuantity >= 3 ? 'BUY_3_GET_2' : 'BUY_2_GET_1',
-      label: paidQuantity >= 3 ? 'Buy 3 Get 2' : 'Buy 2 Get 1',
+      label: paidQuantity >= 3 ? 'Buy 3 Get 5' : 'Buy 2 Get 3',
       paidQuantity,
       freeQuantity,
       deliveredQuantity: paidQuantity + freeQuantity,
