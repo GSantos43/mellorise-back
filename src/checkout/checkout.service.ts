@@ -247,6 +247,7 @@ export class CheckoutService {
     let lineItems = await this.buildStripeLineItems(
       resolvedCart,
       currency,
+      promotion,
     );
     const shipping = this.getShippingDecision(createCheckoutDto.cart, currency);
 
@@ -633,14 +634,32 @@ export class CheckoutService {
   private async buildStripeLineItems(
     cart: ResolvedCheckoutCartItem[],
     currency: string,
+    promotion?: CheckoutBundlePromotion,
   ): Promise<CheckoutLineItem[]> {
-    return cart.map((item) => ({
-      name: item.name,
-      unitAmount: this.toMinorUnitAmount(item.price, currency),
-      currency,
-      quantity: item.quantity,
-      image: item.image,
-    }));
+    return cart.flatMap((item, index) => {
+      const paidLineItem: CheckoutLineItem = {
+        name: item.name,
+        unitAmount: this.toMinorUnitAmount(item.price, currency),
+        currency,
+        quantity: item.quantity,
+        image: item.image,
+      };
+
+      if (index !== 0 || !promotion?.freeQuantity) {
+        return [paidLineItem];
+      }
+
+      return [
+        paidLineItem,
+        {
+          name: `${item.name} - ${promotion.label} free bonus`,
+          unitAmount: 0,
+          currency,
+          quantity: promotion.freeQuantity,
+          image: item.image,
+        },
+      ];
+    });
   }
 
   private async markOrderAsPaid(session: Stripe.Checkout.Session): Promise<void> {
