@@ -307,7 +307,7 @@ export class AnalyticsService {
   }
 
   private shouldLookupIp(ipAddress: string): boolean {
-    if (this.configService.get<string>('ANALYTICS_GEO_ENABLED') === 'false') return false;
+    if (this.configService.get<string>('ANALYTICS_GEO_ENABLED') !== 'true') return false;
     if (!ipAddress || ipAddress === 'localhost') return false;
 
     return !(
