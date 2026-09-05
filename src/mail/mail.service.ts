@@ -155,6 +155,7 @@ export class MailService {
     const amount = this.escapeHtml(input.amount);
     const code = this.escapeHtml(input.code);
     const shopUrl = this.escapeHtml(input.shopUrl);
+    const copyUrl = this.escapeHtml(this.getCouponCopyUrl(input.shopUrl, input.code));
     const expiresAt = this.formatExpiration(input.expiresAt);
 
     return `
@@ -166,6 +167,10 @@ export class MailService {
           <div style="border:1px dashed #31d6b0;border-radius:12px;background:#effcf9;padding:18px;text-align:center;">
             <p style="margin:0 0 8px;color:#4f5f61;font-size:13px;font-weight:700;text-transform:uppercase;">Discount code</p>
             <p style="margin:0;font-size:30px;font-weight:800;letter-spacing:2px;color:#102829;">${code}</p>
+            <a href="${copyUrl}" aria-label="Copy discount code" style="display:inline-block;margin-top:12px;color:#0a72b8;text-decoration:none;font-size:14px;font-weight:800;">
+              <span style="display:inline-block;vertical-align:-3px;margin-right:6px;width:16px;height:16px;border:2px solid #0a72b8;border-radius:4px;"></span>
+              Copy coupon
+            </a>
           </div>
           <p style="margin:18px 0 0;color:#4f5f61;font-size:14px;line-height:1.5;">Expires: ${this.escapeHtml(expiresAt)}</p>
           <a href="${shopUrl}" style="display:inline-block;margin-top:22px;background:#31d6b0;color:#062626;text-decoration:none;font-weight:800;border-radius:999px;padding:14px 22px;">Shop MelloRise</a>
@@ -178,6 +183,7 @@ export class MailService {
     return [
       `Your MelloRise ${input.amount}% discount is ready.`,
       `Code: ${input.code}`,
+      `Copy coupon: ${this.getCouponCopyUrl(input.shopUrl, input.code)}`,
       `Expires: ${this.formatExpiration(input.expiresAt)}`,
       `Shop: ${input.shopUrl}`,
     ].join('\n');
@@ -266,6 +272,15 @@ export class MailService {
       timeStyle: 'short',
       timeZone: 'UTC',
     }).format(date);
+  }
+
+  private getCouponCopyUrl(shopUrl: string, code: string): string {
+    try {
+      const url = new URL(shopUrl);
+      return `${url.origin}/copy-coupon?code=${encodeURIComponent(code)}`;
+    } catch {
+      return `https://mellorise.shop/copy-coupon?code=${encodeURIComponent(code)}`;
+    }
   }
 
   private escapeHtml(value: string): string {

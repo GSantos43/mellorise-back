@@ -21,7 +21,7 @@ export class AnalyticsController {
     @Req() request: AnalyticsRequest,
   ): Promise<{ received: true }> {
     await this.analyticsService.recordEvent(createAnalyticsEventDto, {
-      ip,
+      ip: this.getClientIp(request, ip),
       userAgent: this.getHeader(request, 'user-agent'),
     });
 
@@ -40,6 +40,21 @@ export class AnalyticsController {
   private getHeader(request: AnalyticsRequest, key: string): string {
     const value = request.headers?.[key];
     return Array.isArray(value) ? value[0] ?? '' : value ?? '';
+  }
+
+  private getClientIp(request: AnalyticsRequest, fallbackIp = ''): string {
+    const forwardedFor = this.getHeader(request, 'x-forwarded-for');
+    const forwardedIp = forwardedFor.split(',')[0]?.trim();
+    const candidates = [
+      this.getHeader(request, 'cf-connecting-ip'),
+      this.getHeader(request, 'x-real-ip'),
+      forwardedIp,
+      fallbackIp,
+    ];
+
+    return candidates
+      .map((candidate) => candidate.trim().replace(/^::ffff:/, ''))
+      .find(Boolean) || '';
   }
 
   private assertDashboardAccess(authorization: string): void {

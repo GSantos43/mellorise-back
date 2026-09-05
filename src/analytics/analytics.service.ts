@@ -13,6 +13,7 @@ type AnalyticsEvent = {
   referrer?: string;
   ip?: string;
   userAgent?: string;
+  geo?: AnalyticsGeo;
   params?: Record<string, unknown>;
 };
 
@@ -22,9 +23,29 @@ type AnalyticsMetric = {
   value: number;
 };
 
+type AnalyticsGeo = {
+  city: string;
+  region: string;
+  country: string;
+  countryCode: string;
+};
+
+type IpGeoResponse = {
+  success?: boolean;
+  error?: boolean;
+  message?: string;
+  reason?: string;
+  city?: string;
+  region?: string;
+  region_code?: string;
+  country?: string;
+  country_code?: string;
+};
+
 @Injectable()
 export class AnalyticsService {
   private readonly logger = new Logger(AnalyticsService.name);
+  private readonly geoCache = new Map<string, { expiresAt: number; geo: AnalyticsGeo | null }>();
 
   constructor(private readonly configService: ConfigService) {}
 
@@ -45,6 +66,7 @@ export class AnalyticsService {
       referrer: input.referrer || '',
       ip: context.ip || '',
       userAgent: context.userAgent || '',
+      geo: await this.resolveIpGeo(context.ip || ''),
       params: input.params || {},
     };
 
@@ -76,6 +98,7 @@ export class AnalyticsService {
     topPages: AnalyticsMetric[];
     topProducts: AnalyticsMetric[];
     checkoutErrors: AnalyticsMetric[];
+    topCities: AnalyticsMetric[];
     recentEvents: AnalyticsEvent[];
   }> {
     const events = await this.readStoredEvents();
@@ -113,6 +136,7 @@ export class AnalyticsService {
       checkoutAbandonmentRate: this.getRate(abandoned, beginCheckout + abandoned),
       topPages: this.toMetrics(this.countBy(events, (event) => event.pagePath || '/')),
       topProducts: this.toMetrics(this.countBy(events, (event) => this.getFirstItemName(event))),
+      topCities: this.toMetrics(this.countBy(events, (event) => this.getLocationLabel(event))),
       checkoutErrors: this.toMetrics(this.countBy(
         events.filter((event) => event.name === 'checkout_error'),
         (event) => String(event.params?.code || event.params?.message || 'checkout_error'),
@@ -208,6 +232,18 @@ export class AnalyticsService {
     return String(firstItem?.item_name || '');
   }
 
+  private getLocationLabel(event: AnalyticsEvent): string {
+    if (!event.geo?.city && !event.geo?.countryCode) return '';
+
+    return [
+      event.geo.city,
+      event.geo.region,
+      event.geo.countryCode || event.geo.country,
+    ]
+      .filter(Boolean)
+      .join(', ');
+  }
+
   private getRate(part: number, total: number): number {
     if (!total) return 0;
     return Number(((part / total) * 100).toFixed(1));
@@ -215,5 +251,97 @@ export class AnalyticsService {
 
   private get analyticsEventsFile(): string {
     return this.configService.get<string>('ANALYTICS_EVENTS_FILE') || '';
+  }
+
+  private async resolveIpGeo(ipAddress: string): Promise<AnalyticsGeo | null> {
+    const ip = this.normalizeIp(ipAddress);
+    if (!this.shouldLookupIp(ip)) return null;
+
+    const cached = this.geoCache.get(ip);
+    if (cached && cached.expiresAt > Date.now()) return cached.geo;
+
+    const geo = await this.lookupIpGeo(ip);
+    this.geoCache.set(ip, {
+      geo,
+      expiresAt: Date.now() + this.geoCacheTtlMs,
+    });
+
+    return geo;
+  }
+
+  private async lookupIpGeo(ipAddress: string): Promise<AnalyticsGeo | null> {
+    const providerUrl =
+      this.configService.get<string>('ANALYTICS_GEO_PROVIDER_URL') ||
+      this.configService.get<string>('GEO_IP_PROVIDER_URL') ||
+      'https://ipwho.is/{ip}';
+    const url = providerUrl.replace('{ip}', encodeURIComponent(ipAddress));
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), this.geoTimeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        signal: abortController.signal,
+      });
+      const data = await response.json() as IpGeoResponse;
+
+      if (!response.ok || data.error || data.success === false) {
+        this.logger.warn(
+          `Analytics IP geolocation failed for ${ipAddress}: ${data.reason || data.message || response.status}`,
+        );
+        return null;
+      }
+
+      return {
+        city: String(data.city || ''),
+        region: String(data.region || data.region_code || ''),
+        country: String(data.country || ''),
+        countryCode: String(data.country_code || '').toUpperCase(),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Analytics IP geolocation request failed for ${ipAddress}: ${message}`);
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private shouldLookupIp(ipAddress: string): boolean {
+    if (this.configService.get<string>('ANALYTICS_GEO_ENABLED') === 'false') return false;
+    if (!ipAddress || ipAddress === 'localhost') return false;
+
+    return !(
+      ipAddress === '127.0.0.1' ||
+      ipAddress === '::1' ||
+      ipAddress.startsWith('10.') ||
+      ipAddress.startsWith('192.168.') ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(ipAddress) ||
+      /^f[cd][0-9a-f]{2}:/i.test(ipAddress) ||
+      ipAddress.startsWith('fe80:')
+    );
+  }
+
+  private normalizeIp(value: string): string {
+    return String(value || '').trim().replace(/^::ffff:/, '');
+  }
+
+  private get geoTimeoutMs(): number {
+    const timeout = Number(
+      this.configService.get<string>('ANALYTICS_GEO_TIMEOUT_MS') ||
+      this.configService.get<string>('GEO_IP_TIMEOUT_MS') ||
+      2500,
+    );
+
+    return Number.isFinite(timeout) && timeout > 0 ? timeout : 2500;
+  }
+
+  private get geoCacheTtlMs(): number {
+    const ttl = Number(
+      this.configService.get<string>('ANALYTICS_GEO_CACHE_TTL_MS') ||
+      this.configService.get<string>('GEO_CACHE_TTL_MS') ||
+      1000 * 60 * 60 * 12,
+    );
+
+    return Number.isFinite(ttl) && ttl > 0 ? ttl : 1000 * 60 * 60 * 12;
   }
 }
