@@ -276,6 +276,11 @@ export class CheckoutService {
     await this.analyticsService.recordEvent(
       {
         name: 'begin_checkout',
+        clientId: createCheckoutDto.checkoutAnalytics?.clientId,
+        sessionId: createCheckoutDto.checkoutAnalytics?.sessionId,
+        pagePath: createCheckoutDto.checkoutAnalytics?.pagePath,
+        pageLocation: createCheckoutDto.checkoutAnalytics?.pageLocation,
+        referrer: createCheckoutDto.checkoutAnalytics?.referrer,
         params: {
           source: 'checkout_session_request',
           provider: this.getCheckoutProvider(),

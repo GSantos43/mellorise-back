@@ -10,6 +10,7 @@ import {
   IsOptional,
   IsString,
   IsUrl,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -61,6 +62,33 @@ export class CheckoutPromotionDto {
   @IsInt()
   @Min(1)
   deliveredQuantity: number;
+}
+
+export class CheckoutAnalyticsDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  clientId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  sessionId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(240)
+  pagePath?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(800)
+  pageLocation?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(800)
+  referrer?: string;
 }
 
 export class CheckoutCustomerDto {
@@ -189,4 +217,10 @@ export class CreateCheckoutDto {
   @ValidateNested()
   @Type(() => CheckoutPromotionDto)
   promotion?: CheckoutPromotionDto;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => CheckoutAnalyticsDto)
+  checkoutAnalytics?: CheckoutAnalyticsDto;
 }
