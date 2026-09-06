@@ -26,6 +26,7 @@ type AnalyticsMetric = {
 type AnalyticsDateFilter = {
   from?: string;
   to?: string;
+  eventType?: string;
 };
 
 type AnalyticsPaginationFilter = {
@@ -129,13 +130,19 @@ export class AnalyticsService {
     topProducts: AnalyticsMetric[];
     checkoutErrors: AnalyticsMetric[];
     topCities: AnalyticsMetric[];
+    eventTypes: AnalyticsMetric[];
     recentEvents: AnalyticsEvent[];
     events: AnalyticsEventsPage;
     latestEvent: AnalyticsEvent | null;
   }> {
     const storedEvents = await this.backfillStoredEventGeo(await this.readStoredEvents());
     const dateRange = this.resolveDateRange(filters);
-    const events = this.filterEventsByDate(storedEvents, dateRange);
+    const dateFilteredEvents = this.filterEventsByDate(storedEvents, dateRange);
+    const eventTypes = this.toMetrics(
+      this.countBy(dateFilteredEvents, (event) => event.name || 'unknown'),
+      40,
+    );
+    const events = this.filterEventsByType(dateFilteredEvents, filters.eventType);
     const eventsPage = this.paginateEvents(events, paginationFilter);
     const countByName = this.countBy(events, (event) => event.name || 'unknown');
     const sessions = new Set(events.map((event) => event.sessionId).filter(Boolean));
@@ -174,6 +181,7 @@ export class AnalyticsService {
       topPages: this.toMetrics(this.countBy(events, (event) => event.pagePath || '/')),
       topProducts: this.toMetrics(this.countBy(events, (event) => this.getFirstItemName(event))),
       topCities: this.toMetrics(this.countBy(events, (event) => this.getLocationLabel(event))),
+      eventTypes,
       checkoutErrors: this.toMetrics(this.countBy(
         events.filter((event) => event.name === 'checkout_error'),
         (event) => String(event.params?.code || event.params?.message || 'checkout_error'),
@@ -309,7 +317,7 @@ export class AnalyticsService {
     events: AnalyticsEvent[],
     paginationFilter: AnalyticsPaginationFilter,
   ): AnalyticsEventsPage {
-    const perPage = this.clampInteger(paginationFilter.perPage, 50, 10, 200);
+    const perPage = this.clampInteger(paginationFilter.perPage, 15, 15, 15);
     const total = events.length;
     const totalPages = Math.max(1, Math.ceil(total / perPage));
     const page = this.clampInteger(paginationFilter.page, 1, 1, totalPages);
@@ -407,6 +415,16 @@ export class AnalyticsService {
       if (toTime && eventTime > toTime) return false;
       return true;
     });
+  }
+
+  private filterEventsByType(
+    events: AnalyticsEvent[],
+    eventType?: string,
+  ): AnalyticsEvent[] {
+    const normalizedType = String(eventType || '').trim();
+    if (!normalizedType || normalizedType === 'all') return events;
+
+    return events.filter((event) => event.name === normalizedType);
   }
 
   private async resolveIpGeo(ipAddress: string): Promise<AnalyticsGeo | null> {
