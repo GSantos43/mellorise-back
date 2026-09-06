@@ -1523,7 +1523,10 @@ export class CheckoutService {
 
     return lineItems.map((item) => ({
       ...item,
-      unitAmount: Math.max(1, Math.round(item.unitAmount * multiplier)),
+      unitAmount:
+        item.unitAmount <= 0
+          ? 0
+          : Math.max(1, Math.round(item.unitAmount * multiplier)),
     }));
   }
 
