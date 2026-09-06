@@ -310,6 +310,11 @@ export class CheckoutService {
             '',
           currency,
           total: checkoutTotal,
+          shippingMethod: shipping.displayName,
+          shippingAmount: shipping.isFree ? 0 : shipping.amount,
+          freeShipping: shipping.isFree,
+          shippingMinDeliveryDays: shipping.minDeliveryDays ?? '',
+          shippingMaxDeliveryDays: shipping.maxDeliveryDays ?? '',
           couponCode: coupon?.code ?? '',
           offerCode: automaticOffer?.code ?? '',
           promotionCode: promotion?.code ?? '',
@@ -361,18 +366,39 @@ export class CheckoutService {
         },
       });
 
-      await this.analyticsService.recordSystemEvent('checkout_session_created', {
-        provider: 'stripe',
-        sessionId: session.id,
-        customerEmail:
-          createCheckoutDto.customerEmail || createCheckoutDto.customer?.email || '',
-        currency,
-        total: checkoutTotal,
-        couponCode: coupon?.code ?? '',
-        offerCode: automaticOffer?.code ?? '',
-        promotionCode: promotion?.code ?? '',
-        cart: createCheckoutDto.cart,
-      });
+      await this.analyticsService.recordEvent(
+        {
+          name: 'checkout_session_created',
+          clientId: createCheckoutDto.checkoutAnalytics?.clientId,
+          sessionId: createCheckoutDto.checkoutAnalytics?.sessionId,
+          pagePath: createCheckoutDto.checkoutAnalytics?.pagePath,
+          pageLocation: createCheckoutDto.checkoutAnalytics?.pageLocation,
+          referrer: createCheckoutDto.checkoutAnalytics?.referrer,
+          params: {
+            provider: 'stripe',
+            stripeSessionId: session.id,
+            source:
+              createCheckoutDto.checkoutAnalytics?.source ||
+              'checkout_session_request',
+            customerEmail:
+              createCheckoutDto.customerEmail ||
+              createCheckoutDto.customer?.email ||
+              '',
+            currency,
+            total: checkoutTotal,
+            shippingMethod: shipping.displayName,
+            shippingAmount: shipping.isFree ? 0 : shipping.amount,
+            freeShipping: shipping.isFree,
+            shippingMinDeliveryDays: shipping.minDeliveryDays ?? '',
+            shippingMaxDeliveryDays: shipping.maxDeliveryDays ?? '',
+            couponCode: coupon?.code ?? '',
+            offerCode: automaticOffer?.code ?? '',
+            promotionCode: promotion?.code ?? '',
+            cart: createCheckoutDto.cart,
+          },
+        },
+        analyticsContext,
+      );
 
       return {
         orderId: null,
@@ -1143,7 +1169,7 @@ export class CheckoutService {
       );
     const amount = hasFreeShipping
       ? 0
-      : Number(this.configService.get('STRIPE_SHIPPING_RATE_AMOUNT') ?? 999);
+      : Number(this.configService.get('STRIPE_SHIPPING_RATE_AMOUNT') ?? 399);
     const displayName = hasFreeShipping
       ? this.configService.get<string>('STRIPE_FREE_SHIPPING_RATE_NAME') ??
         'Free shipping'
@@ -1155,12 +1181,10 @@ export class CheckoutService {
       displayName,
       amount,
       currency,
-      minDeliveryDays: this.getOptionalNumberConfig(
-        'STRIPE_SHIPPING_MIN_DELIVERY_DAYS',
-      ),
-      maxDeliveryDays: this.getOptionalNumberConfig(
-        'STRIPE_SHIPPING_MAX_DELIVERY_DAYS',
-      ),
+      minDeliveryDays:
+        this.getOptionalNumberConfig('STRIPE_SHIPPING_MIN_DELIVERY_DAYS') ?? 6,
+      maxDeliveryDays:
+        this.getOptionalNumberConfig('STRIPE_SHIPPING_MAX_DELIVERY_DAYS') ?? 10,
       freeVariationIds,
     };
   }
