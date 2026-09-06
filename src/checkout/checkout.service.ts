@@ -238,10 +238,7 @@ export class CheckoutService {
   ): Promise<CheckoutResponseDto> {
     this.validateCart(createCheckoutDto.cart);
     const resolvedCart = await this.resolveCheckoutCart(createCheckoutDto.cart);
-    const promotion = this.getBundlePromotion(
-      createCheckoutDto.cart,
-      resolvedCart,
-    );
+    const promotion = this.getCheckoutPromotion(createCheckoutDto, resolvedCart);
     const coupon = createCheckoutDto.couponCode
       ? await this.discountsService.validateWelcomeCoupon(
           createCheckoutDto.couponCode,
@@ -1104,6 +1101,55 @@ export class CheckoutService {
       paidQuantity,
       freeQuantity,
       deliveredQuantity: paidQuantity + freeQuantity,
+    };
+  }
+
+  private getCheckoutPromotion(
+    createCheckoutDto: CreateCheckoutDto,
+    resolvedCart: ResolvedCheckoutCartItem[] = [],
+  ): CheckoutBundlePromotion | undefined {
+    const submittedPromotion = this.normalizeSubmittedPromotion(
+      createCheckoutDto,
+    );
+
+    if (submittedPromotion) {
+      return submittedPromotion;
+    }
+
+    return this.getBundlePromotion(createCheckoutDto.cart, resolvedCart);
+  }
+
+  private normalizeSubmittedPromotion(
+    createCheckoutDto: CreateCheckoutDto,
+  ): CheckoutBundlePromotion | undefined {
+    const promotion = createCheckoutDto.promotion;
+    if (!promotion || createCheckoutDto.cart.length !== 1) return undefined;
+
+    const cartItem = createCheckoutDto.cart[0];
+    const paidQuantity = Number(promotion.paidQuantity || 0);
+    const expectedFreeQuantity = paidQuantity >= 3 ? 2 : paidQuantity === 2 ? 1 : 0;
+    const expectedDeliveredQuantity = paidQuantity + expectedFreeQuantity;
+    const canUseBundleVariation =
+      Boolean(cartItem.variationId) &&
+      Number(cartItem.quantity || 0) === 1 &&
+      paidQuantity > 1;
+    const canUsePlainQuantity = Number(cartItem.quantity || 0) === paidQuantity;
+
+    if (
+      !expectedFreeQuantity ||
+      Number(promotion.freeQuantity || 0) !== expectedFreeQuantity ||
+      Number(promotion.deliveredQuantity || 0) !== expectedDeliveredQuantity ||
+      (!canUseBundleVariation && !canUsePlainQuantity)
+    ) {
+      return undefined;
+    }
+
+    return {
+      code: paidQuantity >= 3 ? 'BUY_3_GET_2' : 'BUY_2_GET_1',
+      label: paidQuantity >= 3 ? 'Buy 3 Get 5' : 'Buy 2 Get 3',
+      paidQuantity,
+      freeQuantity: expectedFreeQuantity,
+      deliveredQuantity: expectedDeliveredQuantity,
     };
   }
 
