@@ -272,7 +272,7 @@ export class CheckoutService {
       Boolean(createCheckoutDto.shippingProtection?.enabled),
       currency,
     );
-    if (shippingProtection.enabled) {
+    if (shippingProtection.enabled && shippingProtection.amount > 0) {
       lineItems.push({
         name: shippingProtection.displayName,
         unitAmount: shippingProtection.amount,
@@ -1304,7 +1304,7 @@ export class CheckoutService {
     currency: string,
   ): ShippingProtectionDecision {
     const amount = Number(
-      this.configService.get('STRIPE_SHIPPING_PROTECTION_AMOUNT') ?? 350,
+      this.configService.get('STRIPE_SHIPPING_PROTECTION_AMOUNT') ?? 0,
     );
 
     return {
