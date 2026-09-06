@@ -94,6 +94,11 @@ export class CheckoutAnalyticsDto {
   @IsString()
   @MaxLength(80)
   source?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(240)
+  wetrackedId?: string;
 }
 
 export class CheckoutCustomerDto {

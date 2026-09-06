@@ -318,6 +318,7 @@ export class CheckoutService {
           couponCode: coupon?.code ?? '',
           offerCode: automaticOffer?.code ?? '',
           promotionCode: promotion?.code ?? '',
+          wetrackedId: createCheckoutDto.checkoutAnalytics?.wetrackedId ?? '',
           cart: createCheckoutDto.cart,
         },
       },
@@ -360,6 +361,7 @@ export class CheckoutService {
           promotionDeliveredQuantity: String(
             promotion?.deliveredQuantity ?? 0,
           ),
+          wetrackedId: createCheckoutDto.checkoutAnalytics?.wetrackedId ?? '',
           customerPhone: createCheckoutDto.customer?.phone ?? '',
           shippingPostcode: createCheckoutDto.shippingAddress?.postcode ?? '',
           shippingState: createCheckoutDto.shippingAddress?.state ?? '',
@@ -394,6 +396,7 @@ export class CheckoutService {
             couponCode: coupon?.code ?? '',
             offerCode: automaticOffer?.code ?? '',
             promotionCode: promotion?.code ?? '',
+            wetrackedId: createCheckoutDto.checkoutAnalytics?.wetrackedId ?? '',
             cart: createCheckoutDto.cart,
           },
         },
@@ -552,6 +555,9 @@ export class CheckoutService {
               ]
             : []),
           ...this.toWooCommercePromotionMeta(promotion),
+          ...this.toWooCommerceWetrackedMeta(
+            createCheckoutDto.checkoutAnalytics?.wetrackedId,
+          ),
           ...(payment?.stripeSessionId
             ? [
                 {
@@ -749,6 +755,7 @@ export class CheckoutService {
             key: '_wiio_sync_source',
             value: 'stripe_checkout_webhook',
           },
+          ...this.toWooCommerceWetrackedMeta(session.metadata?.wetrackedId),
         ],
       },
     );
@@ -842,6 +849,9 @@ export class CheckoutService {
       },
       shippingProtection: {
         enabled: session.metadata?.shippingProtection === 'true',
+      },
+      checkoutAnalytics: {
+        wetrackedId: session.metadata?.wetrackedId || undefined,
       },
     };
   }
@@ -1148,6 +1158,24 @@ export class CheckoutService {
       {
         key: '_headless_fulfillment_note',
         value: `Ship ${promotion.deliveredQuantity} bottles: ${promotion.paidQuantity} paid + ${promotion.freeQuantity} free.`,
+      },
+    ];
+  }
+
+  private toWooCommerceWetrackedMeta(
+    wetrackedId?: string,
+  ): WooCommerceOrderPayload['meta_data'] {
+    const value = wetrackedId?.trim();
+    if (!value) return [];
+
+    return [
+      {
+        key: '_wtp',
+        value,
+      },
+      {
+        key: '_headless_wetracked_id',
+        value,
       },
     ];
   }
