@@ -42,7 +42,7 @@ type AnalyticsEventsPage = {
   totalPages: number;
   from: number;
   to: number;
-  order: 'asc';
+  order: 'asc' | 'desc';
 };
 
 type AnalyticsGeo = {
@@ -142,7 +142,9 @@ export class AnalyticsService {
       this.countBy(dateFilteredEvents, (event) => event.name || 'unknown'),
       40,
     );
-    const events = this.filterEventsByType(dateFilteredEvents, filters.eventType);
+    const events = this.sortEventsNewestFirst(
+      this.filterEventsByType(dateFilteredEvents, filters.eventType),
+    );
     const eventsPage = this.paginateEvents(events, paginationFilter);
     const countByName = this.countBy(events, (event) => event.name || 'unknown');
     const sessions = new Set(events.map((event) => event.sessionId).filter(Boolean));
@@ -188,7 +190,7 @@ export class AnalyticsService {
       )),
       recentEvents: eventsPage.items,
       events: eventsPage,
-      latestEvent: events.at(-1) || null,
+      latestEvent: events[0] || null,
     };
   }
 
@@ -332,8 +334,18 @@ export class AnalyticsService {
       totalPages,
       from: total ? startIndex + 1 : 0,
       to: endIndex,
-      order: 'asc',
+      order: 'desc',
     };
+  }
+
+  private sortEventsNewestFirst(events: AnalyticsEvent[]): AnalyticsEvent[] {
+    return [...events].sort((first, second) => {
+      const secondTime = Date.parse(second.timestamp);
+      const firstTime = Date.parse(first.timestamp);
+
+      return (Number.isNaN(secondTime) ? 0 : secondTime) -
+        (Number.isNaN(firstTime) ? 0 : firstTime);
+    });
   }
 
   private clampInteger(
