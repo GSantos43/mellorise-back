@@ -33,10 +33,15 @@ export class AnalyticsController {
     @Headers('authorization') authorization = '',
     @Query('from') from = '',
     @Query('to') to = '',
+    @Query('page') page = '1',
+    @Query('perPage') perPage = '50',
   ): Promise<Awaited<ReturnType<AnalyticsService['getSummary']>>> {
     this.assertDashboardAccess(authorization);
 
-    return this.analyticsService.getSummary({ from, to });
+    return this.analyticsService.getSummary(
+      { from, to },
+      { page: Number(page), perPage: Number(perPage) },
+    );
   }
 
   private getHeader(request: AnalyticsRequest, key: string): string {

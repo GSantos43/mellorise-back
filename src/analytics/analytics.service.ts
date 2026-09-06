@@ -28,6 +28,22 @@ type AnalyticsDateFilter = {
   to?: string;
 };
 
+type AnalyticsPaginationFilter = {
+  page?: number;
+  perPage?: number;
+};
+
+type AnalyticsEventsPage = {
+  items: AnalyticsEvent[];
+  page: number;
+  perPage: number;
+  total: number;
+  totalPages: number;
+  from: number;
+  to: number;
+  order: 'asc';
+};
+
 type AnalyticsGeo = {
   city: string;
   region: string;
@@ -89,7 +105,10 @@ export class AnalyticsService {
     });
   }
 
-  async getSummary(filters: AnalyticsDateFilter = {}): Promise<{
+  async getSummary(
+    filters: AnalyticsDateFilter = {},
+    paginationFilter: AnalyticsPaginationFilter = {},
+  ): Promise<{
     generatedAt: string;
     dateRange: {
       from: string;
@@ -111,10 +130,13 @@ export class AnalyticsService {
     checkoutErrors: AnalyticsMetric[];
     topCities: AnalyticsMetric[];
     recentEvents: AnalyticsEvent[];
+    events: AnalyticsEventsPage;
+    latestEvent: AnalyticsEvent | null;
   }> {
     const storedEvents = await this.backfillStoredEventGeo(await this.readStoredEvents());
     const dateRange = this.resolveDateRange(filters);
     const events = this.filterEventsByDate(storedEvents, dateRange);
+    const eventsPage = this.paginateEvents(events, paginationFilter);
     const countByName = this.countBy(events, (event) => event.name || 'unknown');
     const sessions = new Set(events.map((event) => event.sessionId).filter(Boolean));
     const clients = new Set(events.map((event) => event.clientId).filter(Boolean));
@@ -156,7 +178,9 @@ export class AnalyticsService {
         events.filter((event) => event.name === 'checkout_error'),
         (event) => String(event.params?.code || event.params?.message || 'checkout_error'),
       )),
-      recentEvents: events.slice(-80).reverse(),
+      recentEvents: eventsPage.items,
+      events: eventsPage,
+      latestEvent: events.at(-1) || null,
     };
   }
 
@@ -279,6 +303,41 @@ export class AnalyticsService {
         label: key,
         value,
       }));
+  }
+
+  private paginateEvents(
+    events: AnalyticsEvent[],
+    paginationFilter: AnalyticsPaginationFilter,
+  ): AnalyticsEventsPage {
+    const perPage = this.clampInteger(paginationFilter.perPage, 50, 10, 200);
+    const total = events.length;
+    const totalPages = Math.max(1, Math.ceil(total / perPage));
+    const page = this.clampInteger(paginationFilter.page, 1, 1, totalPages);
+    const startIndex = (page - 1) * perPage;
+    const endIndex = Math.min(startIndex + perPage, total);
+
+    return {
+      items: events.slice(startIndex, endIndex),
+      page,
+      perPage,
+      total,
+      totalPages,
+      from: total ? startIndex + 1 : 0,
+      to: endIndex,
+      order: 'asc',
+    };
+  }
+
+  private clampInteger(
+    value: number | undefined,
+    fallback: number,
+    min: number,
+    max: number,
+  ): number {
+    const normalized = Number(value);
+    if (!Number.isFinite(normalized)) return fallback;
+
+    return Math.min(max, Math.max(min, Math.trunc(normalized)));
   }
 
   private getFirstItemName(event: AnalyticsEvent): string {
