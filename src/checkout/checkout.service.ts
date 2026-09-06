@@ -685,11 +685,16 @@ export class CheckoutService {
     promotion?: CheckoutBundlePromotion,
   ): Promise<CheckoutLineItem[]> {
     return cart.flatMap((item, index) => {
+      const isPromotedMainItem = index === 0 && Boolean(promotion?.freeQuantity);
       const paidLineItem: CheckoutLineItem = {
-        name: item.name,
-        unitAmount: this.toMinorUnitAmount(item.price, currency),
+        name: isPromotedMainItem
+          ? `${item.name} - ${promotion?.label} pack`
+          : item.name,
+        unitAmount: isPromotedMainItem && promotion
+          ? this.getBundlePromotionAmount(promotion, item, currency)
+          : this.toMinorUnitAmount(item.price, currency),
         currency,
-        quantity: item.quantity,
+        quantity: isPromotedMainItem ? 1 : item.quantity,
         image: item.image,
       };
 
@@ -708,6 +713,26 @@ export class CheckoutService {
         },
       ];
     });
+  }
+
+  private getBundlePromotionAmount(
+    promotion: CheckoutBundlePromotion,
+    item: ResolvedCheckoutCartItem,
+    currency: string,
+  ): number {
+    const configKey = promotion.paidQuantity >= 3
+      ? 'STRIPE_BUY_3_GET_5_AMOUNT'
+      : 'STRIPE_BUY_2_GET_3_AMOUNT';
+    const defaultAmount = promotion.paidQuantity >= 3 ? 9998 : 7998;
+    const configuredAmount = Number(
+      this.configService.get(configKey) ?? defaultAmount,
+    );
+
+    if (Number.isFinite(configuredAmount) && configuredAmount > 0) {
+      return Math.round(configuredAmount);
+    }
+
+    return this.toMinorUnitAmount(item.price, currency);
   }
 
   private async markOrderAsPaid(session: Stripe.Checkout.Session): Promise<void> {
@@ -1092,12 +1117,12 @@ export class CheckoutService {
         variationTitle.includes('buy 2 get 1')
         ? 2
         : cart[0].quantity;
-    const freeQuantity = paidQuantity >= 3 ? 2 : paidQuantity === 2 ? 1 : 0;
+    const freeQuantity = paidQuantity === 3 ? 2 : paidQuantity === 2 ? 1 : 0;
     if (!freeQuantity) return undefined;
 
     return {
-      code: paidQuantity >= 3 ? 'BUY_3_GET_2' : 'BUY_2_GET_1',
-      label: paidQuantity >= 3 ? 'Buy 3 Get 5' : 'Buy 2 Get 3',
+      code: paidQuantity === 3 ? 'BUY_3_GET_2' : 'BUY_2_GET_1',
+      label: paidQuantity === 3 ? 'Buy 3 Get 5' : 'Buy 2 Get 3',
       paidQuantity,
       freeQuantity,
       deliveredQuantity: paidQuantity + freeQuantity,
@@ -1127,7 +1152,7 @@ export class CheckoutService {
 
     const cartItem = createCheckoutDto.cart[0];
     const paidQuantity = Number(promotion.paidQuantity || 0);
-    const expectedFreeQuantity = paidQuantity >= 3 ? 2 : paidQuantity === 2 ? 1 : 0;
+    const expectedFreeQuantity = paidQuantity === 3 ? 2 : paidQuantity === 2 ? 1 : 0;
     const expectedDeliveredQuantity = paidQuantity + expectedFreeQuantity;
     const canUseBundleVariation =
       Boolean(cartItem.variationId) &&
@@ -1145,8 +1170,8 @@ export class CheckoutService {
     }
 
     return {
-      code: paidQuantity >= 3 ? 'BUY_3_GET_2' : 'BUY_2_GET_1',
-      label: paidQuantity >= 3 ? 'Buy 3 Get 5' : 'Buy 2 Get 3',
+      code: paidQuantity === 3 ? 'BUY_3_GET_2' : 'BUY_2_GET_1',
+      label: paidQuantity === 3 ? 'Buy 3 Get 5' : 'Buy 2 Get 3',
       paidQuantity,
       freeQuantity: expectedFreeQuantity,
       deliveredQuantity: expectedDeliveredQuantity,
