@@ -39,6 +39,7 @@ function validCheckoutPayload() {
     successUrl: 'https://mellorise.shop/checkout/success',
     cancelUrl: 'https://mellorise.shop/checkout',
     customerEmail: 'customer@example.com',
+    offerCode: 'WELCOME10',
     shippingProtection: {
       enabled: true,
     },
@@ -100,6 +101,7 @@ async function main() {
   );
 
   assert(validatedPayload instanceof CreateCheckoutDto);
+  assert.equal(validatedPayload.offerCode, 'WELCOME10');
   assert.equal(validatedPayload.shippingProtection?.enabled, true);
   assert.equal(
     Object.prototype.hasOwnProperty.call(validatedPayload.shippingProtection, 'amount'),

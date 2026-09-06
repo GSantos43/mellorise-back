@@ -189,6 +189,11 @@ export class CreateCheckoutDto {
   couponCode?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  offerCode?: string;
+
+  @IsOptional()
   @IsObject()
   @ValidateNested()
   @Type(() => CheckoutCustomerDto)

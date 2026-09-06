@@ -198,6 +198,12 @@ type CheckoutBundlePromotion = {
   deliveredQuantity: number;
 };
 
+type CheckoutAutomaticOffer = {
+  code: string;
+  label: string;
+  amount: string;
+};
+
 type ResolvedCheckoutCartItem = {
   productId: number;
   variationId?: number;
@@ -242,6 +248,12 @@ export class CheckoutService {
           createCheckoutDto.customerEmail,
         )
       : null;
+    const automaticOffer = coupon
+      ? null
+      : this.getAutomaticCheckoutOffer(createCheckoutDto.offerCode);
+    const discountPercent = coupon
+      ? Number(coupon.amount)
+      : Number(automaticOffer?.amount || 0);
 
     const currency = this.getCheckoutCurrency();
     let lineItems = await this.buildStripeLineItems(
@@ -249,10 +261,14 @@ export class CheckoutService {
       currency,
       promotion,
     );
-    const shipping = this.getShippingDecision(createCheckoutDto.cart, currency);
+    const shipping = this.getShippingDecision(
+      createCheckoutDto.cart,
+      currency,
+      promotion,
+    );
 
-    if (coupon) {
-      lineItems = this.applyPercentDiscount(lineItems, Number(coupon.amount));
+    if (discountPercent > 0) {
+      lineItems = this.applyPercentDiscount(lineItems, discountPercent);
     }
 
     const shippingProtection = this.getShippingProtectionDecision(
@@ -292,6 +308,7 @@ export class CheckoutService {
           currency,
           total: checkoutTotal,
           couponCode: coupon?.code ?? '',
+          offerCode: automaticOffer?.code ?? '',
           promotionCode: promotion?.code ?? '',
           cart: createCheckoutDto.cart,
         },
@@ -320,13 +337,17 @@ export class CheckoutService {
         metadata: {
           checkoutCart: JSON.stringify(createCheckoutDto.cart),
           shippingMethod: shipping.displayName,
-          shippingAmount: String(shipping.amount),
+          shippingAmount: String(shipping.isFree ? 0 : shipping.amount),
           freeShipping: String(shipping.isFree),
+          shippingMinDeliveryDays: String(shipping.minDeliveryDays ?? ''),
+          shippingMaxDeliveryDays: String(shipping.maxDeliveryDays ?? ''),
           shippingProtection: String(shippingProtection.enabled),
           shippingProtectionAmount: String(shippingProtection.amount),
           couponCode: coupon?.code ?? '',
-          couponPercent: coupon?.amount ?? '',
+          couponPercent: discountPercent > 0 ? String(discountPercent) : '',
+          offerCode: automaticOffer?.code ?? '',
           promotionCode: promotion?.code ?? '',
+          promotionPaidQuantity: String(promotion?.paidQuantity ?? this.getPaidCartQuantity(createCheckoutDto.cart)),
           promotionFreeQuantity: String(promotion?.freeQuantity ?? 0),
           promotionDeliveredQuantity: String(
             promotion?.deliveredQuantity ?? 0,
@@ -345,6 +366,7 @@ export class CheckoutService {
         currency,
         total: checkoutTotal,
         couponCode: coupon?.code ?? '',
+        offerCode: automaticOffer?.code ?? '',
         promotionCode: promotion?.code ?? '',
         cart: createCheckoutDto.cart,
       });
@@ -722,7 +744,11 @@ export class CheckoutService {
       resolvedCart,
     );
     const currency = this.getCheckoutCurrency();
-    const shipping = this.getShippingDecision(createCheckoutDto.cart, currency);
+    const shipping = this.getShippingDecision(
+      createCheckoutDto.cart,
+      currency,
+      promotion,
+    );
     const shippingProtection = this.getShippingProtectionDecision(
       session.metadata?.shippingProtection === 'true',
       currency,
@@ -1100,11 +1126,14 @@ export class CheckoutService {
   private getShippingDecision(
     cart: CheckoutCartItemDto[],
     currency: string,
+    promotion?: CheckoutBundlePromotion,
   ): CheckoutShippingDecision {
     const freeVariationIds = this.getNumberListConfig(
       'FREE_SHIPPING_VARIATION_IDS',
     );
+    const paidQuantity = promotion?.paidQuantity ?? this.getPaidCartQuantity(cart);
     const hasFreeShipping =
+      paidQuantity > 1 ||
       freeVariationIds.length > 0 &&
       cart.every(
         (item) => item.variationId && freeVariationIds.includes(item.variationId),
@@ -1131,6 +1160,10 @@ export class CheckoutService {
       ),
       freeVariationIds,
     };
+  }
+
+  private getPaidCartQuantity(cart: CheckoutCartItemDto[]): number {
+    return cart.reduce((total, item) => total + Number(item.quantity || 0), 0);
   }
 
   private getShippingProtectionDecision(
@@ -1184,6 +1217,29 @@ export class CheckoutService {
     const percent = Number(session.metadata?.couponPercent || 0);
 
     return Number.isFinite(percent) && percent > 0 ? percent : 0;
+  }
+
+  private getAutomaticCheckoutOffer(
+    offerCode?: string,
+  ): CheckoutAutomaticOffer | null {
+    const normalizedCode = offerCode?.trim().toUpperCase();
+    if (!normalizedCode) return null;
+
+    const allowedCodes = new Set([
+      'WELCOME10',
+      'WELCOME10_CART',
+      'FIRST_ORDER_10',
+    ]);
+
+    if (!allowedCodes.has(normalizedCode)) {
+      throw new BadRequestException('Checkout offer is not available.');
+    }
+
+    return {
+      code: 'WELCOME10',
+      label: '10% first-order cart offer',
+      amount: this.discountsService.welcomeDiscountPercent,
+    };
   }
 
   private getCheckoutProvider(): CheckoutProvider {
