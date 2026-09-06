@@ -299,7 +299,10 @@ export class CheckoutService {
         pageLocation: createCheckoutDto.checkoutAnalytics?.pageLocation,
         referrer: createCheckoutDto.checkoutAnalytics?.referrer,
         params: {
-          source: 'checkout_session_request',
+          source:
+            createCheckoutDto.checkoutAnalytics?.source ||
+            'checkout_session_request',
+          eventSource: 'checkout_session_request',
           provider: this.getCheckoutProvider(),
           customerEmail:
             createCheckoutDto.customerEmail ||

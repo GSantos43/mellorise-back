@@ -89,6 +89,11 @@ export class CheckoutAnalyticsDto {
   @IsString()
   @MaxLength(800)
   referrer?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  source?: string;
 }
 
 export class CheckoutCustomerDto {
