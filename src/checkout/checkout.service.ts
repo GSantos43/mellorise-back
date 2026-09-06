@@ -723,7 +723,7 @@ export class CheckoutService {
     const configKey = promotion.paidQuantity >= 3
       ? 'STRIPE_BUY_3_GET_5_AMOUNT'
       : 'STRIPE_BUY_2_GET_3_AMOUNT';
-    const defaultAmount = promotion.paidQuantity >= 3 ? 9998 : 7998;
+    const defaultAmount = promotion.paidQuantity >= 3 ? 9998 : 7498;
     const configuredAmount = Number(
       this.configService.get(configKey) ?? defaultAmount,
     );
