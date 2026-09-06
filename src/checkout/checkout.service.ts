@@ -1109,14 +1109,7 @@ export class CheckoutService {
   ): CheckoutBundlePromotion | undefined {
     if (cart.length !== 1) return undefined;
 
-    const variationTitle = this.normalizeBundleTitle(resolvedCart[0]?.variationTitle);
-    const paidQuantity = variationTitle.includes('buy 3 get 5') ||
-      variationTitle.includes('buy 3 get 2')
-      ? 3
-      : variationTitle.includes('buy 2 get 3') ||
-        variationTitle.includes('buy 2 get 1')
-        ? 2
-        : cart[0].quantity;
+    const paidQuantity = this.getBundlePaidQuantity(cart[0], resolvedCart[0]);
     const freeQuantity = paidQuantity === 3 ? 2 : paidQuantity === 2 ? 1 : 0;
     if (!freeQuantity) return undefined;
 
@@ -1127,6 +1120,48 @@ export class CheckoutService {
       freeQuantity,
       deliveredQuantity: paidQuantity + freeQuantity,
     };
+  }
+
+  private getBundlePaidQuantity(
+    cartItem: CheckoutCartItemDto,
+    resolvedItem?: ResolvedCheckoutCartItem,
+  ): number {
+    const variationId = Number(cartItem.variationId || 0);
+    const buyTwoVariationIds = this.getNumberListConfig(
+      'BUNDLE_BUY_2_VARIATION_IDS',
+    );
+    const buyThreeVariationIds = this.getNumberListConfig(
+      'BUNDLE_BUY_3_VARIATION_IDS',
+    );
+
+    if (variationId && buyThreeVariationIds.includes(variationId)) {
+      return 3;
+    }
+
+    if (variationId && buyTwoVariationIds.includes(variationId)) {
+      return 2;
+    }
+
+    const variationTitle = this.normalizeBundleTitle(resolvedItem?.variationTitle);
+    if (
+      variationTitle.includes('buy 3 get 5') ||
+      variationTitle.includes('buy 3 get 2') ||
+      variationTitle.includes('5 bottles') ||
+      variationTitle.includes('5 frascos')
+    ) {
+      return 3;
+    }
+
+    if (
+      variationTitle.includes('buy 2 get 3') ||
+      variationTitle.includes('buy 2 get 1') ||
+      variationTitle.includes('3 bottles') ||
+      variationTitle.includes('3 frascos')
+    ) {
+      return 2;
+    }
+
+    return Number(cartItem.quantity || 0);
   }
 
   private getCheckoutPromotion(
