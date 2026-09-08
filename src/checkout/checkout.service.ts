@@ -166,6 +166,8 @@ type WooCommerceOrderUpdatePayload = {
 type CheckoutLineItem = {
   name: string;
   unitAmount: number;
+  unitAmountDecimal?: string;
+  totalAmount?: number;
   currency: string;
   quantity: number;
   image?: string | null;
@@ -695,9 +697,17 @@ export class CheckoutService {
           ? this.getBundlePromotionAmount(promotion, item, currency)
           : this.toMinorUnitAmount(item.price, currency),
         currency,
-        quantity: isPromotedMainItem ? 1 : item.quantity,
+        quantity: isPromotedMainItem && promotion ? promotion.paidQuantity : item.quantity,
         image: item.image,
       };
+
+      if (isPromotedMainItem && promotion) {
+        paidLineItem.totalAmount = paidLineItem.unitAmount;
+        paidLineItem.unitAmountDecimal = this.toStripeUnitAmountDecimal(
+          paidLineItem.unitAmount,
+          promotion.paidQuantity,
+        );
+      }
 
       if (index !== 0 || !promotion?.freeQuantity) {
         return [paidLineItem];
@@ -734,6 +744,19 @@ export class CheckoutService {
     }
 
     return this.toMinorUnitAmount(item.price, currency);
+  }
+
+  private toStripeUnitAmountDecimal(totalAmount: number, quantity: number): string {
+    const safeQuantity = Math.max(1, Number(quantity || 1));
+    const unitAmount = totalAmount / safeQuantity;
+
+    return Number.isInteger(unitAmount)
+      ? String(unitAmount)
+      : unitAmount.toFixed(12).replace(/0+$/, '').replace(/\.$/, '');
+  }
+
+  private getLineItemTotalAmount(item: CheckoutLineItem): number {
+    return item.totalAmount ?? item.unitAmount * item.quantity;
   }
 
   private async markOrderAsPaid(session: Stripe.Checkout.Session): Promise<void> {
@@ -1600,18 +1623,29 @@ export class CheckoutService {
 
     const multiplier = Math.max(0, 1 - percent / 100);
 
-    return lineItems.map((item) => ({
-      ...item,
-      unitAmount:
+    return lineItems.map((item) => {
+      const unitAmount =
         item.unitAmount <= 0
           ? 0
-          : Math.max(1, Math.round(item.unitAmount * multiplier)),
-    }));
+          : Math.max(1, Math.round(item.unitAmount * multiplier));
+      const totalAmount = item.totalAmount === undefined
+        ? undefined
+        : Math.max(1, Math.round(item.totalAmount * multiplier));
+
+      return {
+        ...item,
+        unitAmount,
+        totalAmount,
+        unitAmountDecimal: totalAmount === undefined
+          ? item.unitAmountDecimal
+          : this.toStripeUnitAmountDecimal(totalAmount, item.quantity),
+      };
+    });
   }
 
   private sumLineItemAmounts(lineItems: CheckoutLineItem[]): number {
     return lineItems.reduce(
-      (total, item) => total + item.unitAmount * item.quantity,
+      (total, item) => total + this.getLineItemTotalAmount(item),
       0,
     );
   }
