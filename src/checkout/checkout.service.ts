@@ -689,7 +689,7 @@ export class CheckoutService {
       const isPromotedMainItem = index === 0 && Boolean(promotion?.freeQuantity);
       const paidLineItem: CheckoutLineItem = {
         name: isPromotedMainItem
-          ? `${item.name} - ${promotion?.label} pack`
+          ? `PROMO ${promotion?.label} - ${item.name}`
           : item.name,
         unitAmount: isPromotedMainItem && promotion
           ? this.getBundlePromotionAmount(promotion, item, currency)
@@ -705,7 +705,7 @@ export class CheckoutService {
         return [
           ...paidLineItems,
           {
-            name: `${item.name} - ${promotion.label} free bonus`,
+            name: `FREE BONUS - ${promotion.freeQuantity} extra bottle${promotion.freeQuantity === 1 ? '' : 's'} included`,
             unitAmount: 0,
             currency,
             quantity: promotion.freeQuantity,
@@ -721,7 +721,7 @@ export class CheckoutService {
       return [
         paidLineItem,
         {
-          name: `${item.name} - ${promotion.label} free bonus`,
+          name: `FREE BONUS - ${promotion.freeQuantity} extra bottle${promotion.freeQuantity === 1 ? '' : 's'} included`,
           unitAmount: 0,
           currency,
           quantity: promotion.freeQuantity,
