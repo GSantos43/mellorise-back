@@ -66,6 +66,7 @@ export class StripeService {
     try {
       return await this.stripe.checkout.sessions.create({
         mode: 'payment',
+        locale: this.checkoutLocale,
         adaptive_pricing: {
           enabled: false,
         },
@@ -191,5 +192,14 @@ export class StripeService {
     return {
       allowed_countries: countries,
     };
+  }
+
+  private get checkoutLocale(): Stripe.Checkout.SessionCreateParams.Locale {
+    const locale = this.configService
+      .get<string>('STRIPE_CHECKOUT_LOCALE')
+      ?.trim()
+      .toLowerCase();
+
+    return (locale || 'es') as Stripe.Checkout.SessionCreateParams.Locale;
   }
 }
