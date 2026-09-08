@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { CreateAnalyticsEventDto } from './dto/create-analytics-event.dto';
+import { WetrackedService } from './wetracked.service';
 
 type AnalyticsEvent = {
   timestamp: string;
@@ -69,7 +70,10 @@ export class AnalyticsService {
   private readonly logger = new Logger(AnalyticsService.name);
   private readonly geoCache = new Map<string, { expiresAt: number; geo: AnalyticsGeo | null }>();
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly wetrackedService: WetrackedService,
+  ) {}
 
   async recordEvent(
     input: CreateAnalyticsEventDto,
@@ -94,6 +98,7 @@ export class AnalyticsService {
 
     this.logger.log(`analytics ${event.name} ${JSON.stringify(event)}`);
     await this.writeEventFile(event);
+    this.wetrackedService.forwardAnalyticsEvent(input, context);
   }
 
   async recordSystemEvent(
