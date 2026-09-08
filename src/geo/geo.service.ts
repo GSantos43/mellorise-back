@@ -167,7 +167,7 @@ export class GeoService {
 
   private getAllowedCountries(): string[] {
     const configuredCountries =
-      this.configService.get<string>('GEO_ALLOWED_COUNTRIES') || 'US,BR';
+      this.configService.get<string>('GEO_ALLOWED_COUNTRIES') || 'US';
 
     return configuredCountries
       .split(',')
