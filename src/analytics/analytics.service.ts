@@ -466,12 +466,23 @@ export class AnalyticsService {
     if (eventCountryCode === normalizedCountryCode) return true;
 
     const countryName = String(event.geo?.country || '').trim().toUpperCase();
+    const locationText = [
+      event.geo?.city,
+      event.geo?.region,
+      event.geo?.country,
+      event.geo?.countryCode,
+    ]
+      .filter(Boolean)
+      .join(', ')
+      .toUpperCase();
     const aliases: Record<string, string[]> = {
       US: ['UNITED STATES', 'UNITED STATES OF AMERICA', 'USA', 'US'],
       BR: ['BRAZIL', 'BRASIL', 'BR'],
     };
 
-    return (aliases[normalizedCountryCode] || [normalizedCountryCode]).includes(countryName);
+    return (aliases[normalizedCountryCode] || [normalizedCountryCode]).some((alias) => (
+      countryName === alias || locationText.includes(alias)
+    ));
   }
 
   private async resolveIpGeo(ipAddress: string): Promise<AnalyticsGeo | null> {
