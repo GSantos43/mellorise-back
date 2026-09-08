@@ -11,7 +11,6 @@ import Stripe from 'stripe';
 type CheckoutSessionLineItem = {
   name: string;
   unitAmount: number;
-  unitAmountDecimal?: string;
   currency: string;
   quantity: number;
   image?: string | null;
@@ -93,9 +92,7 @@ export class StripeService {
           quantity: item.quantity,
           price_data: {
             currency: 'usd',
-            ...(item.unitAmountDecimal
-              ? { unit_amount_decimal: item.unitAmountDecimal }
-              : { unit_amount: item.unitAmount }),
+            unit_amount: item.unitAmount,
             product_data: {
               name: item.name,
               images: item.image ? [item.image] : undefined,

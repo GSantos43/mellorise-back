@@ -166,8 +166,6 @@ type WooCommerceOrderUpdatePayload = {
 type CheckoutLineItem = {
   name: string;
   unitAmount: number;
-  unitAmountDecimal?: string;
-  totalAmount?: number;
   currency: string;
   quantity: number;
   image?: string | null;
@@ -702,11 +700,18 @@ export class CheckoutService {
       };
 
       if (isPromotedMainItem && promotion) {
-        paidLineItem.totalAmount = paidLineItem.unitAmount;
-        paidLineItem.unitAmountDecimal = this.toStripeUnitAmountDecimal(
-          paidLineItem.unitAmount,
-          promotion.paidQuantity,
-        );
+        const paidLineItems = this.splitBundlePaidLineItem(paidLineItem);
+
+        return [
+          ...paidLineItems,
+          {
+            name: `${item.name} - ${promotion.label} free bonus`,
+            unitAmount: 0,
+            currency,
+            quantity: promotion.freeQuantity,
+            image: item.image,
+          },
+        ];
       }
 
       if (index !== 0 || !promotion?.freeQuantity) {
@@ -746,17 +751,33 @@ export class CheckoutService {
     return this.toMinorUnitAmount(item.price, currency);
   }
 
-  private toStripeUnitAmountDecimal(totalAmount: number, quantity: number): string {
-    const safeQuantity = Math.max(1, Number(quantity || 1));
-    const unitAmount = totalAmount / safeQuantity;
+  private splitBundlePaidLineItem(item: CheckoutLineItem): CheckoutLineItem[] {
+    if (item.quantity <= 1 || item.unitAmount <= 0) {
+      return [item];
+    }
 
-    return Number.isInteger(unitAmount)
-      ? String(unitAmount)
-      : unitAmount.toFixed(12).replace(/0+$/, '').replace(/\.$/, '');
-  }
+    const baseUnitAmount = Math.floor(item.unitAmount / item.quantity);
+    const remainder = item.unitAmount - baseUnitAmount * item.quantity;
+    const lineItems: CheckoutLineItem[] = [];
 
-  private getLineItemTotalAmount(item: CheckoutLineItem): number {
-    return item.totalAmount ?? item.unitAmount * item.quantity;
+    if (remainder > 0) {
+      lineItems.push({
+        ...item,
+        unitAmount: baseUnitAmount + 1,
+        quantity: remainder,
+      });
+    }
+
+    const baseQuantity = item.quantity - remainder;
+    if (baseQuantity > 0) {
+      lineItems.push({
+        ...item,
+        unitAmount: baseUnitAmount,
+        quantity: baseQuantity,
+      });
+    }
+
+    return lineItems;
   }
 
   private async markOrderAsPaid(session: Stripe.Checkout.Session): Promise<void> {
@@ -1628,24 +1649,17 @@ export class CheckoutService {
         item.unitAmount <= 0
           ? 0
           : Math.max(1, Math.round(item.unitAmount * multiplier));
-      const totalAmount = item.totalAmount === undefined
-        ? undefined
-        : Math.max(1, Math.round(item.totalAmount * multiplier));
 
       return {
         ...item,
         unitAmount,
-        totalAmount,
-        unitAmountDecimal: totalAmount === undefined
-          ? item.unitAmountDecimal
-          : this.toStripeUnitAmountDecimal(totalAmount, item.quantity),
       };
     });
   }
 
   private sumLineItemAmounts(lineItems: CheckoutLineItem[]): number {
     return lineItems.reduce(
-      (total, item) => total + this.getLineItemTotalAmount(item),
+      (total, item) => total + item.unitAmount * item.quantity,
       0,
     );
   }
