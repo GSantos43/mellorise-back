@@ -34,13 +34,14 @@ export class AnalyticsController {
     @Query('from') from = '',
     @Query('to') to = '',
     @Query('eventType') eventType = '',
+    @Query('country') country = 'US',
     @Query('page') page = '1',
     @Query('perPage') perPage = '15',
   ): Promise<Awaited<ReturnType<AnalyticsService['getSummary']>>> {
     this.assertDashboardAccess(authorization);
 
     return this.analyticsService.getSummary(
-      { from, to, eventType },
+      { from, to, eventType, country },
       { page: Number(page), perPage: Number(perPage) },
     );
   }

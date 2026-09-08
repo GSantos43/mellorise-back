@@ -28,6 +28,7 @@ type AnalyticsDateFilter = {
   from?: string;
   to?: string;
   eventType?: string;
+  country?: string;
 };
 
 type AnalyticsPaginationFilter = {
@@ -143,12 +144,13 @@ export class AnalyticsService {
     const storedEvents = await this.backfillStoredEventGeo(await this.readStoredEvents());
     const dateRange = this.resolveDateRange(filters);
     const dateFilteredEvents = this.filterEventsByDate(storedEvents, dateRange);
+    const countryFilteredEvents = this.filterEventsByCountry(dateFilteredEvents, filters.country);
     const eventTypes = this.toMetrics(
-      this.countBy(dateFilteredEvents, (event) => event.name || 'unknown'),
+      this.countBy(countryFilteredEvents, (event) => event.name || 'unknown'),
       40,
     );
     const events = this.sortEventsNewestFirst(
-      this.filterEventsByType(dateFilteredEvents, filters.eventType),
+      this.filterEventsByType(countryFilteredEvents, filters.eventType),
     );
     const eventsPage = this.paginateEvents(events, paginationFilter);
     const countByName = this.countBy(events, (event) => event.name || 'unknown');
@@ -442,6 +444,34 @@ export class AnalyticsService {
     if (!normalizedType || normalizedType === 'all') return events;
 
     return events.filter((event) => event.name === normalizedType);
+  }
+
+  private filterEventsByCountry(
+    events: AnalyticsEvent[],
+    country?: string,
+  ): AnalyticsEvent[] {
+    const normalizedCountry = String(country || 'US').trim().toUpperCase();
+    if (!normalizedCountry || normalizedCountry === 'ALL') return events;
+
+    if (normalizedCountry === 'EXCLUDE_BR') {
+      return events.filter((event) => !this.isCountryMatch(event, 'BR'));
+    }
+
+    return events.filter((event) => this.isCountryMatch(event, normalizedCountry));
+  }
+
+  private isCountryMatch(event: AnalyticsEvent, countryCode: string): boolean {
+    const normalizedCountryCode = String(countryCode || '').trim().toUpperCase();
+    const eventCountryCode = String(event.geo?.countryCode || '').trim().toUpperCase();
+    if (eventCountryCode === normalizedCountryCode) return true;
+
+    const countryName = String(event.geo?.country || '').trim().toUpperCase();
+    const aliases: Record<string, string[]> = {
+      US: ['UNITED STATES', 'UNITED STATES OF AMERICA', 'USA', 'US'],
+      BR: ['BRAZIL', 'BRASIL', 'BR'],
+    };
+
+    return (aliases[normalizedCountryCode] || [normalizedCountryCode]).includes(countryName);
   }
 
   private async resolveIpGeo(ipAddress: string): Promise<AnalyticsGeo | null> {
