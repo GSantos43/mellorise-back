@@ -23,6 +23,7 @@ type CreateCheckoutSessionInput = {
   successUrl: string;
   cancelUrl: string;
   customerEmail?: string;
+  locale?: string;
   metadata: Record<string, string>;
 };
 
@@ -66,7 +67,7 @@ export class StripeService {
     try {
       return await this.stripe.checkout.sessions.create({
         mode: 'payment',
-        locale: this.checkoutLocale,
+        locale: this.getCheckoutLocale(input.locale),
         adaptive_pricing: {
           enabled: false,
         },
@@ -194,12 +195,32 @@ export class StripeService {
     };
   }
 
-  private get checkoutLocale(): Stripe.Checkout.SessionCreateParams.Locale {
+  private getCheckoutLocale(
+    requestedLocale?: string,
+  ): Stripe.Checkout.SessionCreateParams.Locale {
+    const normalizedRequestedLocale = this.normalizeCheckoutLocale(requestedLocale);
+
+    if (normalizedRequestedLocale) {
+      return normalizedRequestedLocale;
+    }
+
     const locale = this.configService
       .get<string>('STRIPE_CHECKOUT_LOCALE')
       ?.trim()
       .toLowerCase();
 
-    return (locale || 'es') as Stripe.Checkout.SessionCreateParams.Locale;
+    return this.normalizeCheckoutLocale(locale) || 'es';
+  }
+
+  private normalizeCheckoutLocale(
+    locale?: string,
+  ): Stripe.Checkout.SessionCreateParams.Locale | undefined {
+    const baseLocale = String(locale || '').split('-')[0].trim().toLowerCase();
+
+    if (baseLocale === 'en' || baseLocale === 'es') {
+      return baseLocale;
+    }
+
+    return undefined;
   }
 }

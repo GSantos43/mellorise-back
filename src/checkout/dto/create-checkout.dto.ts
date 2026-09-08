@@ -199,6 +199,11 @@ export class CreateCheckoutDto {
   offerCode?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(8)
+  checkoutLocale?: string;
+
+  @IsOptional()
   @IsObject()
   @ValidateNested()
   @Type(() => CheckoutCustomerDto)

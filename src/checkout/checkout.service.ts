@@ -337,6 +337,7 @@ export class CheckoutService {
         shipping,
         successUrl: createCheckoutDto.successUrl,
         cancelUrl: createCheckoutDto.cancelUrl,
+        locale: createCheckoutDto.checkoutLocale,
         customerEmail:
           createCheckoutDto.customerEmail || createCheckoutDto.customer?.email,
         metadata: {
