@@ -183,6 +183,7 @@ export class AnalyticsService {
         { key: 'purchases', label: 'Purchases', value: purchases },
         { key: 'abandoned', label: 'Checkout abandons', value: abandoned },
         { key: 'errors', label: 'Checkout errors', value: countByName.checkout_error || 0 },
+        { key: 'site_exits', label: 'Site exits', value: countByName.site_exit || 0 },
       ],
       funnel,
       conversionRate: this.getRate(purchases, Math.max(1, countByName.view_item || countByName.page_view || 0)),

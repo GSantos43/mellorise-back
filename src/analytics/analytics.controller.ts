@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Ip, Post, Query, Req, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, Ip, Post, Query, Req, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AnalyticsService } from './analytics.service';
 import { CreateAnalyticsEventDto } from './dto/create-analytics-event.dto';
@@ -20,6 +20,22 @@ export class AnalyticsController {
     @Ip() ip: string,
     @Req() request: AnalyticsRequest,
   ): Promise<{ received: true }> {
+    await this.analyticsService.recordEvent(createAnalyticsEventDto, {
+      ip: this.getClientIp(request, ip),
+      userAgent: this.getHeader(request, 'user-agent'),
+    });
+
+    return { received: true };
+  }
+
+  @Get('events/pixel')
+  async createPixelEvent(
+    @Query('payload') payload = '',
+    @Ip() ip: string,
+    @Req() request: AnalyticsRequest,
+  ): Promise<{ received: true }> {
+    const createAnalyticsEventDto = this.parsePixelPayload(payload);
+
     await this.analyticsService.recordEvent(createAnalyticsEventDto, {
       ip: this.getClientIp(request, ip),
       userAgent: this.getHeader(request, 'user-agent'),
@@ -64,6 +80,20 @@ export class AnalyticsController {
     return candidates
       .map((candidate) => candidate.trim().replace(/^::ffff:/, ''))
       .find(Boolean) || '';
+  }
+
+  private parsePixelPayload(payload: string): CreateAnalyticsEventDto {
+    try {
+      const event = JSON.parse(payload) as CreateAnalyticsEventDto;
+
+      if (event?.name !== 'site_exit') {
+        throw new Error('Invalid pixel event name.');
+      }
+
+      return event;
+    } catch {
+      throw new BadRequestException('Invalid analytics pixel payload.');
+    }
   }
 
   private assertDashboardAccess(authorization: string): void {

@@ -10,6 +10,7 @@ const ANALYTICS_EVENT_NAMES = [
   'checkout_redirect',
   'checkout_error',
   'checkout_abandoned',
+  'site_exit',
   'purchase',
   'stripe_checkout_completed',
   'stripe_checkout_expired',
